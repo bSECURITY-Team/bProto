@@ -183,7 +183,11 @@ impl Splicer {
                         .map(|table| table.lookup(&tag).is_some())
                         .unwrap_or(false)
                 });
-            tracing::debug!(%peer, tag_known, "initial label rejected; splicing to donor");
+            tracing::debug!(%peer, tag_known,
+                sid = %vpn_core::config::to_hex(hello.session_id.as_ref().unwrap()),
+                random = %vpn_core::config::to_hex(hello.client_random.as_ref().unwrap()),
+                keyshare = %vpn_core::config::to_hex(hello.x25519_share.as_ref().unwrap()),
+                "initial label rejected; splicing to donor");
             return self.open(peer, dgram).await;
         }
         Action::Tunnel

@@ -340,6 +340,14 @@ fn tun_reader(fd: RawFd, tx: mpsc::Sender<Vec<u8>>) {
             }
         }
         let packet = buf[..n as usize].to_vec();
+        // The tunnel carries IPv4 only. Route-only IPv6 capture (the
+        // leak-prevention fallback in the Android service) feeds v6 packets
+        // here; forwarding them would blow the MTU (`PayloadTooLarge`) and
+        // kill the pump. Capture means drop.
+        let version = packet.first().map(|b| b >> 4).unwrap_or(0);
+        if version != 4 {
+            continue;
+        }
         if tx.blocking_send(packet).is_err() {
             return; // tunnel shut down
         }

@@ -237,25 +237,38 @@ class BprotoVpnService : VpnService() {
      * Establishes the tun interface.
      *
      * The tunnel itself carries IPv4 only. IPv6 is *captured and dropped* so
-     * that v6 traffic cannot leave the device in the clear; the ULA in
-     * [IPV6_ADDRESS] exists for that alone. Capturing it is best effort: some
-     * Android builds refuse an IPv6 address in their native address-config
-     * path (logcat `VpnJni: Invalid address`), which would otherwise take the
-     * whole tunnel down with it. If that happens we retry IPv4-only and return
-     * a warning that gets surfaced in the UI — a silent fallback would hide an
-     * IPv6 leak, and a loud one is strictly better than a dead tunnel.
+     * that v6 traffic cannot leave the device in the clear. Three attempts,
+     * each quieter than the last:
+     *
+     * 1. v4 + a ULA v6 address + a `::/0` route — the full capture, the
+     *    address existing for the interface to be v6-complete;
+     * 2. if the device refuses the v6 address (OEM `VpnJni: Invalid address`,
+     *    `IllegalArgumentException`) — a `::/0` route alone. The kernel still
+     *    steers v6 into the tun; the pump drops non-IPv4 packets, so nothing
+     *    leaves the device in the clear;
+     * 3. only if even the route is refused — IPv4-only, plus a loud warning:
+     *    a silent fallback would hide an IPv6 leak, and a loud one is
+     *    strictly better than a dead tunnel.
      *
      * @return the descriptor, plus an optional warning describing what was lost.
      */
     private fun establishTunnel(address: String): Pair<ParcelFileDescriptor?, String?> {
-        return try {
-            vpnBuilder(address)
+        try {
+            return vpnBuilder(address)
                 .addAddress(IPV6_ADDRESS, IPV6_PREFIX)
                 .addRoute("::", 0)
                 .establish() to null
         } catch (refused: IllegalArgumentException) {
-            null to "IPv6 capture refused; connection stopped to prevent unprotected IPv6 traffic"
+            Log.i(TAG, "v6 address capture refused; falling back to a ::/0 route", refused)
         }
+        try {
+            return vpnBuilder(address)
+                .addRoute("::", 0)
+                .establish() to null
+        } catch (refused: IllegalArgumentException) {
+            Log.i(TAG, "v6 route capture refused; falling back to IPv4-only", refused)
+        }
+        return null to "IPv6 leak possible: the device refused both the address and the ::/0 route; the tunnel runs IPv4-only"
     }
 
     private fun vpnBuilder(address: String): Builder {
