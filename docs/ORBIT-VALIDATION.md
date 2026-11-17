@@ -70,6 +70,24 @@ Runtime target receipts alone do not prove arbitrary Internet forwarding.
 Post-stop recovery requires the operator to start the corrected service;
 automatic service restart and tombstone epoch compaction are not implemented.
 
+## Android release signing preparation / Подготовка release-подписи
+
+Branch: ci/3.0-android-release-signing, stacked on the credential branch.
+Added environment-based Gradle signingConfig and a trusted-tag workflow consuming
+native libraries from the same run. Release publication requires android-release-apk,
+successful apksigner verification and the configured public certificate fingerprint.
+Missing secrets never cause a debug fallback. Keystore preparation uses mode 600
+and exclusive creation; cleanup is unconditional.
+
+Executed: four artifact-gate tests passed, checking missing/malformed keystore,
+private permissions, overwrite rejection, verifier failure, mismatched signer and
+multiple signers. These tests use subprocess fixtures, not a real signed APK.
+Workflow YAML parsed successfully; release depends on the signing job.
+NOT executed: Gradle release compilation, real signing, hosted Actions, installed
+Android upgrade, signer rotation or debug-to-release reinstall/reimport.
+These remain acceptance gates, not completed features.
+Procedures: [EN](ANDROID-SIGNING.md) / [RU](ANDROID-SIGNING.ru.md).
+
 ## Historical Orbit baseline / Исторические проверки
 
 Recorded on 2026-11-16 in a prior shared Linux development environment. The Orbit

@@ -1137,7 +1137,7 @@ field names in the panel.
 | Native IPv6 forwarding | Не реализовано / Not implemented |
 | Domain-rule routing engine | Не реализовано / Not implemented |
 | Guaranteed allowlist/censorship bypass | Не заявляется / Not claimed |
-| Release-signed Android distribution | Не поставляется в опубликованной 2.5.0 / Not shipped in published 2.5.0 |
+| Release-signed Android distribution | CI configured; requires signing secrets and hosted/device validation / Требует secrets и проверки; published 2.5.0 remains debug |
 | iOS compiled release / desktop Windows/macOS UI | Не поставляется / Not shipped |
 
 **RU.** Не считайте заглушку успешным результатом. Если нужная функция отсутствует,
