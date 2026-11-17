@@ -194,17 +194,19 @@ pub fn verify(tags: &TagTable, hello_datagram: &[u8], now_unix_secs: u64) -> Res
     let (_header, frame) = packet::decode_plaintext_control(hello_datagram)?;
     let hello = Hello::decode(frame)?;
 
-    let (psk, user_id) = tags.lookup(&hello.tag).ok_or(Error::BadLabel)?;
-    if !auth::verify_label_mac(
-        &psk,
-        &hello.tag,
-        &hello.client_random,
-        &hello.x25519_pub,
-        now_unix_secs,
-        &hello.mac,
-    ) {
-        return Err(Error::BadLabel);
-    }
+    let (psk, user_id) = tags
+        .candidates(&hello.tag)
+        .find(|(psk, _)| {
+            auth::verify_label_mac(
+                psk,
+                &hello.tag,
+                &hello.client_random,
+                &hello.x25519_pub,
+                now_unix_secs,
+                &hello.mac,
+            )
+        })
+        .ok_or(Error::BadLabel)?;
     Ok(VerifiedHello {
         psk,
         user_id,

@@ -1,5 +1,10 @@
 # Experimental configuration agent
 
+Credential synchronization now extends this same agent with a separate v2 users
+operation and private server IPC. Existing v1 TLS/JSON operations stay compatible.
+Use a separate instance for TOML. See [KEY-SYNC](../../docs/KEY-SYNC.md), including
+ownership, health hooks, durable recovery and actual Linux TUN test boundaries.
+
 The panel's authenticated `POST /api/config-agent` endpoint forwards apply,
 health and rollback operations to one fixed operator-configured HTTPS destination.
 Client certificates are required by the agent. The panel validates the agent

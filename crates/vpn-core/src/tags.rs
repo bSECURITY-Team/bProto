@@ -1,8 +1,8 @@
 //! The routing tag table: `tag -> (user, psk)`.
 //!
 //! The panel is the source of truth; servers hold this table in memory and
-//! refresh it over the loopback admin API. Revocation is a `remove`, which takes
-//! effect on the next packet.
+//! refresh it through a validated snapshot. Runtime revocation must also evict
+//! sessions through `ServerNode::replace_tags`; table removal alone is not enough.
 
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
@@ -10,11 +10,24 @@ use std::net::Ipv4Addr;
 use crate::auth::{TAG_LEN, compute_tag};
 use crate::config::from_hex;
 use crate::crypto::KEY_LEN;
+use sha2::{Digest, Sha256};
+
+/// Bound unauthenticated MAC verification work for one routing tag.
+pub const MAX_KEYS_PER_USER: usize = 16;
+
+/// Internal credential identity; never transmitted or logged.
+#[must_use]
+pub fn credential_id(psk: &[u8; KEY_LEN]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"bproto internal credential v1");
+    hash.update(psk);
+    hash.finalize().into()
+}
 
 /// One user's authentication material.
 #[derive(Debug, Clone)]
 struct Entry {
-    psk: [u8; KEY_LEN],
+    psks: Vec<[u8; KEY_LEN]>,
     user_id: u64,
     /// Address currently leased to this user, if any.
     ip: Option<Ipv4Addr>,
@@ -39,18 +52,31 @@ impl TagTable {
         let mut t = Self::new();
         for (id, psk_hex) in users {
             let psk = parse_psk(psk_hex)?;
-            t.insert(tag_key, *id, psk);
+            let tag = compute_tag(tag_key, *id);
+            let entry = t.by_tag.entry(tag).or_insert_with(|| Entry {
+                psks: Vec::new(),
+                user_id: *id,
+                ip: None,
+            });
+            if entry.user_id != *id || entry.psks.contains(&psk) {
+                return Err("duplicate credential or routing tag collision".into());
+            }
+            if entry.psks.len() >= MAX_KEYS_PER_USER {
+                return Err("too many credentials for one user".into());
+            }
+            entry.psks.push(psk);
         }
         Ok(t)
     }
 
     /// Insert or replace one user.
     pub fn insert(&mut self, tag_key: &[u8; KEY_LEN], user_id: u64, psk: [u8; KEY_LEN]) {
+        self.remove(tag_key, user_id);
         let tag = compute_tag(tag_key, user_id);
         self.by_tag.insert(
             tag,
             Entry {
-                psk,
+                psks: vec![psk],
                 user_id,
                 ip: None,
             },
@@ -60,17 +86,44 @@ impl TagTable {
     /// Remove a user (immediate revocation).
     pub fn remove(&mut self, tag_key: &[u8; KEY_LEN], user_id: u64) {
         let tag = compute_tag(tag_key, user_id);
-        if let Some(e) = self.by_tag.remove(&tag)
-            && let Some(ip) = e.ip
-        {
-            self.by_ip.remove(&ip);
-        }
+        self.by_tag.remove(&tag);
+        self.by_ip.retain(|_, owner| owner != &tag);
     }
 
     /// Look up the PSK and user id for a routing tag.
     #[must_use]
     pub fn lookup(&self, tag: &[u8; TAG_LEN]) -> Option<([u8; KEY_LEN], u64)> {
-        self.by_tag.get(tag).map(|e| (e.psk, e.user_id))
+        self.candidates(tag).next()
+    }
+
+    /// Bounded PSK candidates for legacy uid/tag credentials.
+    pub fn candidates(
+        &self,
+        tag: &[u8; TAG_LEN],
+    ) -> impl Iterator<Item = ([u8; KEY_LEN], u64)> + '_ {
+        self.by_tag
+            .get(tag)
+            .into_iter()
+            .flat_map(|e| e.psks.iter().map(|psk| (*psk, e.user_id)))
+    }
+
+    /// Whether a credential remains authorized in this snapshot.
+    #[must_use]
+    pub fn contains_credential(&self, tag: &[u8; TAG_LEN], id: &[u8; 32]) -> bool {
+        self.candidates(tag)
+            .any(|(psk, _)| &credential_id(&psk) == id)
+    }
+
+    /// Bind an independently leased device address.
+    pub fn bind_address(&mut self, tag: &[u8; TAG_LEN], ip: Ipv4Addr) {
+        if self.by_tag.contains_key(tag) {
+            self.by_ip.insert(ip, *tag);
+        }
+    }
+
+    /// Release exactly one device lease, without affecting sibling credentials.
+    pub fn release_address(&mut self, ip: Ipv4Addr) {
+        self.by_ip.remove(&ip);
     }
 
     /// Bind a tunnel address to a tag. Replaces any previous lease for that tag.
@@ -169,5 +222,18 @@ mod tests {
         let t = TagTable::build(&key, &users).unwrap();
         assert_eq!(t.len(), 2);
         assert!(TagTable::build(&key, &[(3, "zz".into())]).is_err());
+    }
+
+    #[test]
+    fn snapshots_keep_sibling_credentials_and_reject_duplicates_or_excess() {
+        let key = [3; KEY_LEN];
+        let users = vec![(1, "11".repeat(32)), (1, "22".repeat(32))];
+        let t = TagTable::build(&key, &users).unwrap();
+        assert_eq!(t.candidates(&compute_tag(&key, 1)).count(), 2);
+        assert!(TagTable::build(&key, &[(1, "11".repeat(32)), (1, "11".repeat(32))]).is_err());
+        let excessive = (0..=MAX_KEYS_PER_USER)
+            .map(|n| (1, format!("{n:064x}")))
+            .collect::<Vec<_>>();
+        assert!(TagTable::build(&key, &excessive).is_err());
     }
 }

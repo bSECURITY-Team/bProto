@@ -65,16 +65,15 @@ pub fn classify(view: &ClientHelloView, tags: &TagTable, now: u64) -> Verdict {
     let Some(tag) = extract_tag(&view.session_id) else {
         return Verdict::RelayToDonor;
     };
-    let Some((psk, user_id)) = tags.lookup(&tag) else {
-        return Verdict::RelayToDonor;
-    };
-    if verify_session_id(
-        &psk,
-        &view.session_id,
-        &view.client_random,
-        &view.x25519_pub,
-        now,
-    ) {
+    if let Some((_, user_id)) = tags.candidates(&tag).find(|(psk, _)| {
+        verify_session_id(
+            psk,
+            &view.session_id,
+            &view.client_random,
+            &view.x25519_pub,
+            now,
+        )
+    }) {
         Verdict::Intercept(user_id)
     } else {
         // Right tag, wrong MAC: a replay or a forgery. Relay, do not reveal.
