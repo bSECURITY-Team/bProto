@@ -55,6 +55,13 @@ pub struct DonorConfig {
     /// Health-check interval in seconds.
     #[serde(default = "default_health_secs")]
     pub health_interval_secs: u64,
+    /// Edge for TCP probes whose ClientHello carries no SNI. Many donor
+    /// edges (Akamai) answer nameless hellos with a TLS alert instead of
+    /// their default site; pointing this at a host that serves one keeps the
+    /// port looking like an ordinary server. Empty/absent = relay those
+    /// probes to the donor itself.
+    #[serde(default)]
+    pub sni_fallback: Option<String>,
 }
 
 fn default_alpn() -> Vec<String> {
@@ -229,6 +236,7 @@ mod tests {
                 alpn: default_alpn(),
                 addr_override: None,
                 health_interval_secs: 30,
+                sni_fallback: None,
             },
             tag_key: "01".repeat(32),
             users: vec![
@@ -268,6 +276,7 @@ mod tests {
                 alpn: default_alpn(),
                 addr_override: None,
                 health_interval_secs: 30,
+                sni_fallback: None,
             },
             tag_key: "abcd".into(),
             users: vec![],

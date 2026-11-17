@@ -111,6 +111,13 @@ async fn main() -> anyhow::Result<()> {
         Some(a) => Some(a),
         None => resolve_donor_v4(&cfg.donor.sni),
     };
+    // Nameless TCP probes can be pointed at a friendlier edge.
+    let fallback_addr = cfg
+        .donor
+        .sni_fallback
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .and_then(resolve_donor_v4);
     let splicer = match donor_addr {
         Some(addr) => {
             let s = vpn_server::splicer::Splicer::start(Arc::clone(&sock), addr, Arc::clone(&tags));
@@ -167,6 +174,7 @@ async fn main() -> anyhow::Result<()> {
         let device = device.clone();
         let boot = Arc::clone(&boot);
         let donor = donor_addr;
+        let fallback = fallback_addr;
         tokio::spawn(async move {
             loop {
                 let Ok((stream, peer)) = listener.accept().await else {
@@ -176,8 +184,11 @@ async fn main() -> anyhow::Result<()> {
                 let device = device.clone();
                 let boot = Arc::clone(&boot);
                 let donor = donor;
+                let fallback = fallback;
                 tokio::spawn(async move {
-                    if let Err(e) = serve_tcp_conn(stream, peer, node, device, boot, donor).await {
+                    if let Err(e) =
+                        serve_tcp_conn(stream, peer, node, device, boot, donor, fallback).await
+                    {
                         tracing::debug!(error = %e, %peer, "tcp connection ended");
                     }
                 });
@@ -205,6 +216,7 @@ async fn serve_tcp_conn(
     device: Option<Arc<dev::TunDevice>>,
     boot: Arc<Instant>,
     donor: Option<SocketAddr>,
+    fallback: Option<SocketAddr>,
 ) -> anyhow::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     const MAX_FRAME: usize = packet::MAX_DATAGRAM + 32;
@@ -221,7 +233,7 @@ async fn serve_tcp_conn(
                 && let Some(donor) = donor
             {
                 tracing::debug!(%peer, "tcp probe relayed to the donor");
-                return splice_to_donor(stream, donor).await;
+                return splice_to_donor(stream, donor, fallback).await;
             }
         }
         Ok(_) => return Ok(()), // 0/1 bytes then EOF: empty scan, nothing to say
@@ -281,16 +293,66 @@ async fn serve_tcp_conn(
 /// Relay the whole connection to the donor over TCP (ShadowTLS style): the
 /// prober completes a genuine TLS handshake with the donor's certificate and
 /// can browse the real site through us.
+///
+/// The first TLS record is inspected (never modified — TLS 1.3 binds the
+/// transcript) to pick the upstream edge: a hello that names a host goes to
+/// the donor, a nameless probe (curl to an IP, most scanners) goes to the
+/// fallback edge when one is configured, because some edges (Akamai) answer
+/// nameless hellos with an alert instead of their default site.
 async fn splice_to_donor(
     mut client: tokio::net::TcpStream,
     donor: SocketAddr,
+    fallback: Option<SocketAddr>,
 ) -> anyhow::Result<()> {
-    let mut upstream = tokio::net::TcpStream::connect(donor)
-        .await
-        .with_context(|| format!("donor connect {donor}"))?;
-    upstream.set_nodelay(true).ok();
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Pull in the first record. Anything before it does not exist; a record
+    // header with a body that never finishes means we relay the header and
+    // let the bidirectional copy carry the rest as-is.
+    let first: Option<([u8; 5], Vec<u8>)>;
+    let mut header = [0u8; 5];
+    if client.read_exact(&mut header).await.is_ok() {
+        let len = u16::from_be_bytes([header[3], header[4]]) as usize;
+        let mut body = vec![0u8; len];
+        match client.read_exact(&mut body).await {
+            Ok(_) => first = Some((header, body)),
+            Err(_) => {
+                // Incomplete record: relay the header verbatim and let the
+                // bidirectional copy carry whatever follows.
+                let mut upstream = upstream_connect(donor).await?;
+                let _ = upstream.write_all(&header).await;
+                let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
+                return Ok(());
+            }
+        }
+    } else {
+        return Ok(()); // prober hung up before speaking
+    }
+
+    // Route on the hello's own SNI. Byte-for-byte forwarding: the record is
+    // part of the transcript, so touching it only breaks real clients.
+    let (header, body) = first.expect("first is Some here");
+    let mut upstream = match (vpn_server::sni::extract_sni(&header, &body), fallback) {
+        (None, Some(fallback_addr)) => {
+            tracing::debug!("probe without SNI relayed to the fallback edge");
+            upstream_connect(fallback_addr).await?
+        }
+        _ => upstream_connect(donor).await?,
+    };
+    let _ = upstream.write_all(&header).await;
+    let _ = upstream.write_all(&body).await;
+
     let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
     Ok(())
+}
+
+/// Connect to a relay edge with the usual TCP hygiene.
+async fn upstream_connect(addr: SocketAddr) -> anyhow::Result<tokio::net::TcpStream> {
+    let upstream = tokio::net::TcpStream::connect(addr)
+        .await
+        .with_context(|| format!("donor connect {addr}"))?;
+    upstream.set_nodelay(true).ok();
+    Ok(upstream)
 }
 
 fn bring_up_tun(

@@ -168,6 +168,19 @@ impl Splicer {
             .read()
             .is_ok_and(|table| labeled_initial_is_ours(&hello, &table, unix_now_secs()));
         if !ours {
+            // Diagnostics only: is the failure an unknown tag (keys/config
+            // mismatch on the client) or a MAC/window mismatch?
+            let tag_known = hello
+                .session_id
+                .as_ref()
+                .and_then(|sid| vpn_core::auth::extract_tag(sid))
+                .is_some_and(|tag| {
+                    self.tags
+                        .read()
+                        .map(|table| table.lookup(&tag).is_some())
+                        .unwrap_or(false)
+                });
+            tracing::debug!(%peer, tag_known, "initial label rejected; splicing to donor");
             return self.open(peer, dgram).await;
         }
         Action::Tunnel
