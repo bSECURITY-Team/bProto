@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/dr-lexus-dr/bProto/actions/workflows/build.yml"><img src="https://github.com/dr-lexus-dr/bProto/actions/workflows/build.yml/badge.svg" alt="Build and test" /></a>
-  <a href="https://github.com/dr-lexus-dr/bProto/releases/tag/v2.5.0"><img src="https://img.shields.io/badge/release-2.5.0-76e7bb?style=flat-square" alt="Release 2.5.0" /></a>
+  <a href="https://github.com/bSECURITY-Team/bProto/actions/workflows/build.yml"><img src="https://github.com/bSECURITY-Team/bProto/actions/workflows/build.yml/badge.svg" alt="Build and test" /></a>
+  <a href="https://github.com/bSECURITY-Team/bProto/releases/tag/v2.5.0"><img src="https://img.shields.io/badge/release-2.5.0-76e7bb?style=flat-square" alt="Release 2.5.0" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-8bbbd9?style=flat-square" alt="AGPL-3.0" /></a>
   <img src="https://img.shields.io/badge/platforms-Android%20%C2%B7%20Linux-9ba9c9?style=flat-square" alt="Android and Linux" />
 </p>
@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="#quick-install">Установка / Install</a> ·
-  <a href="https://github.com/dr-lexus-dr/bProto/releases/tag/v2.5.0">Загрузки / Downloads</a> ·
+  <a href="https://github.com/bSECURITY-Team/bProto/releases/tag/v2.5.0">Загрузки / Downloads</a> ·
   <a href="docs/releases/2.5.0.md">Что нового / Release notes</a> ·
   <a href="docs/PLAN-2.5.md">Статус разработки / Roadmap</a>
 </p>
@@ -111,7 +111,7 @@ systemd и доступным TUN. Откройте root-оболочку: `sudo
 Debian 13+, with systemd and TUN available. Enter a root shell using `sudo -i`, then run:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/dr-lexus-dr/bProto/main/bootstrap.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/bSECURITY-Team/bProto/main/bootstrap.sh)
 ```
 
 **RU.** Команда скачивает бинарники **v2.5.0**, проверяет контрольную сумму,
@@ -155,7 +155,7 @@ but is not an independent publisher signature: the manifest comes from the same 
 
 ```bash
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/dr-lexus-dr/bProto/main/bootstrap.sh \
+  https://raw.githubusercontent.com/bSECURITY-Team/bProto/main/bootstrap.sh \
   -o bootstrap.sh
 less bootstrap.sh
 bash -n bootstrap.sh
@@ -486,13 +486,13 @@ subscription as a server list. Linux DNS remains operator-managed. See
 <a id="android"></a>
 ## Android: установка и глобус / Android installation and globe
 
-**RU.** Скачайте APK только из [релиза проекта](https://github.com/dr-lexus-dr/bProto/releases).
+**RU.** Скачайте APK только из [релиза проекта](https://github.com/bSECURITY-Team/bProto/releases).
 Устройство должно разрешать установку из выбранного источника. В релизе 1.0.0
 APK подписан debug-ключом. Если Android сообщает о несовместимой подписи при
 обновлении, потребуется удаление старого приложения; сначала сохраните свою
 подписку, поскольку профили устройства будут удалены.
 
-**EN.** Download the APK from the [project release](https://github.com/dr-lexus-dr/bProto/releases).
+**EN.** Download the APK from the [project release](https://github.com/bSECURITY-Team/bProto/releases).
 Allow installation from your selected source. Release 1.0.0 is debug-signed.
 If an update fails because the signatures differ, uninstalling the old app may
 be necessary. Keep your subscription before doing so; device profiles are removed.
@@ -658,15 +658,18 @@ not reset an existing account’s password. Change it through Settings.
 <a id="key-sync"></a>
 ## Панель и сервер: обязательная синхронизация / Required panel-to-server synchronization
 
-**RU.** Панель **пока не отправляет новые ключи серверу автоматически**. Ключ,
-созданный в UI, не начинает работать только потому, что его QR-код отображается.
-Для соединения сервер должен знать соответствующие `id` и `psk`, а `tag_key`
-сервера должен совпадать с `BPROTO_TAG_KEY` панели.
+**RU.** Доступна opt-in доставка ключей одного inbound через существующий
+mTLS-агент, с hot reload и отзывом живых сессий. Дождитесь статуса applied:
+QR сам по себе не означает применение. При несовпадении `tag_key` доставка
+отклоняется до записи. Настройка и границы: [KEY-SYNC.ru.md](docs/KEY-SYNC.ru.md).
 
-**EN.** The panel **does not automatically push new keys to the server yet**.
-A newly displayed QR code does not mean the server already accepts it. The
-server must know the matching user `id` and `psk`, and its `tag_key` must match
-the panel’s `BPROTO_TAG_KEY`.
+**EN.** Opt-in delivery for one inbound now uses the existing mTLS agent,
+hot reload and live-session revocation. Wait for applied; displaying a QR
+does not confirm enforcement. A mismatched tag key rejects the snapshot before
+writing. Provisioning and limits: [KEY-SYNC.md](docs/KEY-SYNC.md).
+
+**RU.** Без настройки агента остаётся ручной процесс ниже.
+**EN.** Without agent provisioning, use the manual process below.
 
 1. **RU:** создайте inbound с адресом сервера. **EN:** create the inbound with the server endpoint.
 2. **RU:** создайте клиента и ключ; импортируйте URI в приватном окружении. **EN:** create client/key and inspect the imported configuration privately.
@@ -1128,13 +1131,13 @@ field names in the panel.
 | Ordered authenticated server fallback | Реализовано / Implemented |
 | JSON subscription IPv4/DNS/app rules | Реализовано для Android / Implemented for Android |
 | Panel login, clients, subscriptions | Реализовано / Implemented |
-| Automatic panel-to-server key push | Не подключено / Not wired |
+| Automatic panel-to-server key push | Реализовано / Implemented, opt-in, one inbound; Linux TUN create/apply/revoke tested; production unverified |
 | Minimum-latency automatic ranking | Не реализовано / Not implemented |
 | Active-session migration/live failover | Не реализовано / Not implemented |
 | Native IPv6 forwarding | Не реализовано / Not implemented |
 | Domain-rule routing engine | Не реализовано / Not implemented |
 | Guaranteed allowlist/censorship bypass | Не заявляется / Not claimed |
-| Release-signed Android distribution | Нет в v1.0.0 / Not in v1.0.0 |
+| Release-signed Android distribution | Не поставляется в опубликованной 2.5.0 / Not shipped in published 2.5.0 |
 | iOS compiled release / desktop Windows/macOS UI | Не поставляется / Not shipped |
 
 **RU.** Не считайте заглушку успешным результатом. Если нужная функция отсутствует,
@@ -1198,13 +1201,13 @@ than on a user’s production server without a maintenance window.
 <a id="support"></a>
 ## Как сообщить о проблеме / Reporting a problem
 
-**RU.** Создайте [issue](https://github.com/dr-lexus-dr/bProto/issues) и укажите
+**RU.** Создайте [issue](https://github.com/bSECURITY-Team/bProto/issues) и укажите
 версию/commit, ОС/архитектуру, способ установки, точную команду без секретов,
 ожидаемое поведение и фактическую ошибку. Для Android укажите модель, версию ОС
 и удалось ли выдать VPN consent. Для панели — URL-путь без subscription ID,
 код HTTP и краткий фрагмент соответствующего лога.
 
-**EN.** Open an [issue](https://github.com/dr-lexus-dr/bProto/issues) with the
+**EN.** Open an [issue](https://github.com/bSECURITY-Team/bProto/issues) with the
 version/commit, OS/architecture, installation method, exact command with secrets
 removed, expected behavior and actual error. For Android, include device/OS
 and whether VPN consent succeeded. For the panel, include a URL path without
@@ -1231,7 +1234,7 @@ import/subscription URIs. Redact public IPs when unnecessary. Do not attach
 <a id="releases"></a>
 ## Релизы, проверки и дальнейшее чтение / Releases, evidence and further reading
 
-**RU.** В [GitHub Releases](https://github.com/dr-lexus-dr/bProto/releases)
+**RU.** В [GitHub Releases](https://github.com/bSECURITY-Team/bProto/releases)
 публикуются Linux-архив с панелью, Android debug APK, исходники и SHA256SUMS.
 Для v1.0.0 имена: `bproto-linux-x86_64.tar.gz`, `bproto-1.0.0-debug.apk`,
 `bproto-v1.0.0-source.tar.gz`. Манифест v1.0.0 содержит путь `android/` перед APK;
@@ -1240,7 +1243,7 @@ import/subscription URIs. Redact public IPs when unnecessary. Do not attach
 остаются неизменными. Используйте `main/bootstrap.sh`, а не путь к bootstrap
 в старом теге, где этого файла ещё нет.
 
-**EN.** [GitHub Releases](https://github.com/dr-lexus-dr/bProto/releases)
+**EN.** [GitHub Releases](https://github.com/bSECURITY-Team/bProto/releases)
 provides a Linux/panel archive, Android debug APK, source archive and SHA256SUMS.
 For v1.0.0 the files are `bproto-linux-x86_64.tar.gz`, `bproto-1.0.0-debug.apk`
 and `bproto-v1.0.0-source.tar.gz`. Its manifest prefixes the APK with `android/`;

@@ -2,7 +2,7 @@
 # Standalone network installer; supports bash <(curl -fsSL URL).
 set -euo pipefail
 
-REPOSITORY="https://github.com/dr-lexus-dr/bProto"
+REPOSITORY="https://github.com/bSECURITY-Team/bProto"
 RELEASE="v2.5.0"
 DIRECTORY="/opt/bproto"
 TARGET="all"

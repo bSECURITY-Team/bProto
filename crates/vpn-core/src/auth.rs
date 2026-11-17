@@ -19,6 +19,16 @@ use crate::crypto::KEY_LEN;
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Keyed local runtime receipt for configuration bytes. Never log the result:
+/// it is used only over the private control socket to bind disk and runtime.
+#[must_use]
+pub fn config_receipt(key: &[u8; 32], bytes: &[u8]) -> [u8; 32] {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC key length");
+    mac.update(b"bproto config receipt v1\0");
+    mac.update(bytes);
+    mac.finalize().into_bytes().into()
+}
+
 /// Length of the TLS `session_id` we emit. Must stay 32 to look like a browser.
 pub const SESSION_ID_LEN: usize = 32;
 /// Length of the routing tag.

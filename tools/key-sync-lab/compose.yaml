@@ -1,0 +1,33 @@
+# No host networking or published ports. Throwaway keys exist only in state.
+x-lab-volumes: &lab-volumes
+  - state:/lab
+  - ../../target/lab:/usr/local/bin:ro
+  - ../config-agent/agent.py:/app/tools/config-agent/agent.py:ro
+  - ../connection_lab.py:/app/tools/connection_lab.py:ro
+  - ../../tests/test_key_sync_e2e.py:/app/tests/test_key_sync_e2e.py:ro
+  - ./runner.py:/app/tools/key-sync-lab/runner.py:ro
+services:
+  client:
+    image: bproto-key-sync-lab:local
+    build:
+      context: ../..
+      dockerfile: tools/key-sync-lab/Dockerfile
+    command: [client]
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, NET_RAW]
+    devices: [/dev/net/tun:/dev/net/tun]
+    volumes: *lab-volumes
+    networks: [lab]
+  server:
+    image: bproto-key-sync-lab:local
+    command: [server]
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    volumes: *lab-volumes
+    depends_on: [client]
+    networks: [lab]
+volumes:
+  state: {}
+networks:
+  lab: {}

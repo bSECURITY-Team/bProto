@@ -19,10 +19,11 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+mod config_agent;
 mod inbounds;
+mod key_sync;
 mod keys;
 mod routing;
-mod config_agent;
 mod stats;
 mod subs;
 
@@ -175,6 +176,9 @@ async fn main() -> anyhow::Result<()> {
         allow_private_subs,
     };
 
+    if let Some(worker) = key_sync::Worker::from_env()? {
+        tokio::spawn(worker.run(app.clone()));
+    }
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!(%listen, panel = PANEL_NAME, "listening (put Caddy/HTTPS in front)");
     axum::serve(listener, router(app)).await?;
@@ -191,6 +195,7 @@ fn router(app: App) -> Router {
 
     let protected = Router::new()
         .route("/api/config-agent", post(config_agent::apply))
+        .route("/api/key-sync", get(key_sync::status))
         // --- account ---
         .route("/api/me", get(auth::me))
         .route("/api/auth/logout", post(auth::logout))
@@ -308,7 +313,13 @@ async fn bootstrap_admin(db: &SqlitePool) -> anyhow::Result<()> {
     if count > 0 {
         return Ok(());
     }
-    let pw = std::env::var("BPROTO_ADMIN_PASSWORD").unwrap_or_else(|_| random_token());
+    let pw = std::env::var("BPROTO_ADMIN_PASSWORD").map_err(|_| {
+        anyhow::anyhow!("BPROTO_ADMIN_PASSWORD is required to provision the first administrator")
+    })?;
+    anyhow::ensure!(
+        !pw.trim().is_empty(),
+        "initial admin password must not be empty"
+    );
     let hash = hash_password(&pw)?;
     sqlx::query(
         "INSERT INTO users (username, password_hash, is_admin, status, created_at) \
@@ -318,8 +329,7 @@ async fn bootstrap_admin(db: &SqlitePool) -> anyhow::Result<()> {
     .bind(now())
     .execute(db)
     .await?;
-    tracing::warn!("created default admin 'admin' with password: {pw}");
-    tracing::warn!("change it immediately; this line is written once");
+    tracing::info!("created initial administrator from operator-provided credential");
     Ok(())
 }
 

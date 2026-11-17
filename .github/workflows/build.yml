@@ -24,6 +24,7 @@ jobs:
           /tmp/quic-tests/bin/python -m coverage run --data-file=/tmp/quic-coverage --source=tools/quic-bridge -m unittest discover -s tests -p test_quic_bridge.py -v
           /tmp/quic-tests/bin/python -m coverage report --data-file=/tmp/quic-coverage --fail-under=70
           /tmp/quic-tests/bin/python -m coverage run --data-file=/tmp/agent-coverage --source=tools/config-agent -m unittest discover -s tests -p test_config_agent.py -v
+          /tmp/quic-tests/bin/python -m coverage run --append --data-file=/tmp/agent-coverage --source=tools/config-agent -m unittest discover -s tests -p test_users_sync.py -v
           /tmp/quic-tests/bin/python -m coverage report --data-file=/tmp/agent-coverage --fail-under=70
   linux-panel:
     runs-on: ubuntu-24.04
@@ -59,6 +60,23 @@ jobs:
           cargo build --locked -p vpn-core --features ech --example h3_bridge
           BPROTO_TEST_BIN_DIR=target/release /tmp/native-carriers/bin/python -m unittest discover -s tests -p test_ech.py -v
       - run: cargo test --locked --manifest-path panel/backend/Cargo.toml
+      - name: Panel mTLS create apply revoke with native handshake
+        env:
+          BPROTO_TEST_BIN_DIR: target/release
+          BPROTO_TEST_PANEL_BIN: panel/backend/target/release/panel
+        run: python3 -m unittest discover -s tests -p test_key_sync_e2e.py -v
+      - name: Credential synchronization over kernel TUN in isolated namespaces
+        run: |
+          mkdir -p target/lab
+          strip --strip-all -o target/lab/vpn-server target/release/vpn-server
+          strip --strip-all -o target/lab/bproto target/release/bproto
+          strip --strip-all -o target/lab/panel panel/backend/target/release/panel
+          chmod 755 target/lab target/lab/vpn-server target/lab/bproto target/lab/panel
+          chmod 644 tools/key-sync-lab/runner.py tools/config-agent/agent.py tools/connection_lab.py tests/test_key_sync_e2e.py
+          docker compose -p bproto-ci-key-sync -f tools/key-sync-lab/compose.yaml up --build --abort-on-container-exit --exit-code-from server
+      - name: Remove private key synchronization lab state
+        if: always()
+        run: docker compose -p bproto-ci-key-sync -f tools/key-sync-lab/compose.yaml down --volumes
       - name: Package Linux and panel with installation resources
         run: |
           tar -czf bproto-linux-x86_64.tar.gz dist

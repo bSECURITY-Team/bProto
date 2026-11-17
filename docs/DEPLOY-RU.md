@@ -24,7 +24,7 @@ APK подписан отладочным ключом конкретной сб
 ```sh
 sudo apt-get update
 sudo apt-get install -y build-essential pkg-config ca-certificates iproute2 nftables openssl git
-git clone https://github.com/dr-lexus-dr/bProto.git
+git clone https://github.com/bSECURITY-Team/bProto.git
 cd bProto
 ./build_app.sh --no-panel
 sudo ./install.sh server --port 443

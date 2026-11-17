@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, type Client, type Inbound, type KeyConfig } from "../api";
 import { ClientDialog, ConfigPreview, NewClientDialog, useConfirm } from "../components";
 import {
@@ -33,6 +33,11 @@ export default function Clients() {
   const [config, setConfig] = useState<{ config: KeyConfig; subUrl?: string } | null>(null);
 
   const inbounds = useLoader(() => api.inbounds());
+  const keySync = useLoader(() => api.keySync());
+  useEffect(() => {
+    const timer = window.setInterval(() => void keySync.reload(), 5000);
+    return () => window.clearInterval(timer);
+  }, [keySync.reload]);
   const clients = useLoader(() => api.clients(inboundFilter), [inboundFilter]);
   const action = useAction(clients.reload);
   const { confirm, dialog } = useConfirm();
@@ -50,6 +55,19 @@ export default function Clients() {
   return (
     <div className="space-y-4">
       {dialog}
+      <Card>
+        <p className="font-medium">Key delivery / Доставка ключей</p>
+        <ErrorBanner error={keySync.error} />
+        {keySync.data && (
+          <p className="text-sm text-neutral-700" role="status">
+            {!keySync.data.configured
+              ? "Automatic delivery is not configured / Автоматическая доставка не настроена."
+              : `Inbound #${keySync.data.inbound_id}: ${keySync.data.status} · ${keySync.data.applied_revision}/${keySync.data.desired_revision}`}
+            {keySync.data.configured && " · Other inbounds require separate provisioning / Остальные inbounds требуют отдельной настройки."}
+            {keySync.data.last_error && ` · ${keySync.data.last_error}`}
+          </p>
+        )}
+      </Card>
       {pickingInbound && (
         <Modal title="New client" onClose={() => setPickingInbound(false)}>
           <p className="text-sm text-neutral-700">

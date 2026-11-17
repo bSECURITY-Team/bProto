@@ -967,14 +967,138 @@ async fn subscription_base_url_credentials_are_rejected_atomically() {
 #[tokio::test]
 async fn config_agent_requires_admin_and_rejects_unknown_actions() {
     let app = test_app().await;
-    let (status, _) = call(&app, "POST", "/api/config-agent", None,
-        Some(json!({"action": "health"}))).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/config-agent",
+        None,
+        Some(json!({"action": "health"})),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let token = login(&app).await;
-    let (status, _) = call(&app, "POST", "/api/config-agent", Some(&token),
-        Some(json!({"action": "run-shell"}))).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/config-agent",
+        Some(&token),
+        Some(json!({"action": "run-shell"})),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, _) = call(&app, "POST", "/api/config-agent", Some(&token),
-        Some(json!({"action": "health", "url": "https://attacker.example"}))).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/config-agent",
+        Some(&token),
+        Some(json!({"action": "health", "url": "https://attacker.example"})),
+    )
+    .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn key_sync_outbox_covers_create_revoke_delete_disable_and_expiry() {
+    let app = test_app().await;
+    let token = login(&app).await;
+    let inbound = create_inbound(&app, &token).await;
+    let (status, _) = call(&app, "GET", "/api/key-sync", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (initial, empty) = crate::key_sync::snapshot(&app, inbound).await.unwrap();
+    assert_eq!(empty["users"], json!([]));
+    let (status, client) = call(
+        &app,
+        "POST",
+        &format!("/api/inbounds/{inbound}/clients"),
+        Some(&token),
+        Some(json!({"username": "sync-user", "label": "device"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let uid = client["user_id"].as_i64().unwrap();
+    let key = client["key_id"].as_i64().unwrap();
+    let (created, one) = crate::key_sync::snapshot(&app, inbound).await.unwrap();
+    assert!(created > initial);
+    assert_eq!(one["users"].as_array().unwrap().len(), 1);
+    let (same, _) = crate::key_sync::snapshot(&app, inbound).await.unwrap();
+    assert_eq!(same, created);
+    // Disabling can be reversed without permanently revoking a credential.
+    sqlx::query("UPDATE users SET status = 'disabled' WHERE id = ?")
+        .bind(uid)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (disabled, absent) = crate::key_sync::snapshot(&app, inbound).await.unwrap();
+    assert!(disabled > created);
+    assert_eq!(absent["users"], json!([]));
+    assert_eq!(absent["revoked"], json!([]));
+    sqlx::query("UPDATE users SET status = 'active', expires_at = ? WHERE id = ?")
+        .bind(now() + 100)
+        .bind(uid)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (_, enabled) = crate::key_sync::snapshot(&app, inbound).await.unwrap();
+    assert_eq!(enabled["users"], one["users"]);
+    sqlx::query("UPDATE users SET expires_at = ? WHERE id = ?")
+        .bind(now() - 1)
+        .bind(uid)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (_, expired) = crate::key_sync::snapshot(&app, inbound).await.unwrap();
+    assert_eq!(expired["users"], json!([]));
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/keys/{key}/revoke"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (rev, revoked) = crate::key_sync::snapshot(&app, inbound).await.unwrap();
+    assert_eq!(revoked["revoked"].as_array().unwrap().len(), 1);
+    let (status, _) = call(
+        &app,
+        "DELETE",
+        &format!("/api/keys/{key}"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (deleted, snapshot) = crate::key_sync::snapshot(&app, inbound).await.unwrap();
+    assert!(deleted > rev);
+    assert_eq!(snapshot["revoked"], revoked["revoked"]);
+    let (_, public_state) = call(&app, "GET", "/api/key-sync", Some(&token), None).await;
+    assert!(public_state.get("tag_proof").is_none());
+    assert!(public_state.get("users").is_none());
+}
+
+#[tokio::test]
+async fn invalid_client_label_leaves_no_user_key_or_outbox_event() {
+    let app = test_app().await;
+    let token = login(&app).await;
+    let inbound = create_inbound(&app, &token).await;
+    let (before, _) = crate::key_sync::snapshot(&app, inbound).await.unwrap();
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/inbounds/{inbound}/clients"),
+        Some(&token),
+        Some(json!({"username":"invalid-sync", "label":""})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE username = 'invalid-sync'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+    assert_eq!(
+        crate::key_sync::snapshot(&app, inbound).await.unwrap().0,
+        before
+    );
 }

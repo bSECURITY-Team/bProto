@@ -14,6 +14,7 @@
 
 pub mod admin;
 pub mod config;
+pub mod control;
 pub mod interceptor;
 pub mod nst;
 pub mod splicer;

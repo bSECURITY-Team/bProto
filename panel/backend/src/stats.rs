@@ -501,24 +501,22 @@ pub(crate) async fn report_sessions(
 async fn resolve_key(db: &SqlitePool, s: &ReportedSession) -> Result<Option<(i64, i64)>, ApiError> {
     if let Some(tag) = &s.tag {
         let bytes = hex::decode(tag.trim()).unwrap_or_default();
-        if bytes.len() == 8 {
-            if let Some(row) = sqlx::query("SELECT id, user_id FROM keys WHERE tag = ?")
+        if bytes.len() == 8
+            && let Some(row) = sqlx::query("SELECT id, user_id FROM keys WHERE tag = ?")
                 .bind(&bytes[..])
                 .fetch_optional(db)
                 .await?
-            {
-                return Ok(Some((row.get("id"), row.get("user_id"))));
-            }
-        }
-    }
-    if let Some(key_id) = s.key_id {
-        if let Some(row) = sqlx::query("SELECT id, user_id FROM keys WHERE id = ?")
-            .bind(key_id)
-            .fetch_optional(db)
-            .await?
         {
             return Ok(Some((row.get("id"), row.get("user_id"))));
         }
+    }
+    if let Some(key_id) = s.key_id
+        && let Some(row) = sqlx::query("SELECT id, user_id FROM keys WHERE id = ?")
+            .bind(key_id)
+            .fetch_optional(db)
+            .await?
+    {
+        return Ok(Some((row.get("id"), row.get("user_id"))));
     }
     Ok(None)
 }
