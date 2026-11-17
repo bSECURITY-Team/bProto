@@ -9,6 +9,22 @@ plugins {
     id("org.jetbrains.kotlin.android") version "2.1.0"
 }
 
+// Credentials are supplied only to trusted release jobs. Debug builds need none.
+// TODO(3.0 validation): run the trusted signing workflow with the real keystore
+// and verify supported-device upgrades. Synthetic gate tests do not cover that.
+val releaseStore = providers.environmentVariable("BPROTO_ANDROID_KEYSTORE").orNull
+val releaseStorePassword = providers.environmentVariable("BPROTO_ANDROID_STORE_PASSWORD").orNull
+val releaseAlias = providers.environmentVariable("BPROTO_ANDROID_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("BPROTO_ANDROID_KEY_PASSWORD").orNull
+val releaseSigningAvailable = listOf(releaseStore, releaseStorePassword, releaseAlias, releaseKeyPassword)
+    .all { !it.isNullOrBlank() }
+
+gradle.taskGraph.whenReady {
+    if (allTasks.any { it.name.contains("Release", ignoreCase = true) } && !releaseSigningAvailable) {
+        throw GradleException("Release signing requires all four BPROTO_ANDROID signing environment variables")
+    }
+}
+
 android {
     namespace = "dev.bproto.client"
     compileSdk = 35
@@ -25,8 +41,20 @@ android {
         }
     }
 
+    signingConfigs {
+        if (releaseSigningAvailable) {
+            create("release") {
+                storeFile = file(requireNotNull(releaseStore))
+                storePassword = releaseStorePassword
+                keyAlias = releaseAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

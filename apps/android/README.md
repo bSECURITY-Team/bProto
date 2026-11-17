@@ -174,3 +174,10 @@ Automatic selection tries subscription entries in order and uses the first
 server that completes the authenticated protocol handshake. It does not rank
 latency, change transport or defeat an IP/UDP allowlist. Use JSON subscriptions
 (`?format=json`) to receive routing policy. Refresh by importing the URL again.
+# Release signing / Release-подпись
+
+Signing and migration procedures: [EN](../../docs/ANDROID-SIGNING.md) /
+[RU](../../docs/ANDROID-SIGNING.ru.md). The prepared CI requires permanent signing
+secrets and a trusted certificate fingerprint. Actual hosted signing and device
+upgrade/reinstall validation have not yet been performed; debug builds remain
+available for development.
