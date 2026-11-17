@@ -32,3 +32,4 @@ __pycache__/
 
 # Private connection lab keys and local test outputs
 .connection-lab/
+out.bin
