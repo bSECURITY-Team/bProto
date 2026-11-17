@@ -149,7 +149,10 @@ impl Splicer {
         let hello = match inspect_client_hello(dgram) {
             Ok(h) => h,
             // Parse failed — treat as prober traffic and splice it through.
-            Err(_) => return self.open(peer, dgram).await,
+            Err(e) => {
+                tracing::debug!(%peer, len = dgram.len(), error = %e, "initial inspect failed; splicing");
+                return self.open(peer, dgram).await;
+            }
         };
         let (Some(_sid), Some(_cr), Some(_kp)) = (
             hello.session_id.as_ref(),
@@ -193,6 +196,7 @@ impl Splicer {
             tracing::warn!(%peer, splices = active, "splice cap reached; dropping");
             return Action::Drop;
         }
+        tracing::debug!(%peer, "splice opened");
         let uplink = match DonorUplink::bind_to(self.donor).await {
             Ok(u) => u,
             Err(e) => {

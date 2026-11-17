@@ -455,6 +455,7 @@ async fn serve(
         tokio::select! {
             received = sock.recv_from(&mut datagram) => {
                 let Ok((n, from)) = received else { continue };
+                tracing::debug!(%from, len = n, first = datagram.first().map(|b| format!("{b:02x}")).unwrap_or_default(), "udp datagram in");
                 // Masquerade demux: QUIC Initial-shaped traffic is served by
                 // the donor splice or (label verified) the bProto half; only
                 // the native `0x1x` datagrams reach `node.handle` blindly.
