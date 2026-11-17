@@ -31,7 +31,7 @@ use crate::ip;
 use crate::packet::{self, Header};
 use crate::pool::IpPool;
 use crate::session::{Opened, Session, unix_now_secs};
-use crate::tags::TagTable;
+use crate::tags::{TagTable, credential_id};
 use crate::transport::udp;
 
 /// How many received packets trigger an immediate ACK.
@@ -96,6 +96,7 @@ struct ServerSession {
     /// per-connection writer task); `None` means the UDP socket.
     tcp: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
     user_id: u64,
+    credential: [u8; 32],
     tag: [u8; TAG_LEN],
     ip: Ipv4Addr,
     ack: AckRanges,
@@ -128,6 +129,8 @@ struct Inner {
 /// A completed handshake kept for repeat deliveries of the same HELLO.
 #[derive(Debug)]
 struct CachedHello {
+    /// Used to preserve retransmission dedup for unchanged credentials on reload.
+    credential: [u8; 32],
     /// The exact HELLO_ACK datagram to resend (byte-identical).
     ack: Vec<u8>,
     /// Absolute micros after which the entry is stale.
@@ -156,6 +159,40 @@ pub struct ServerNode {
 }
 
 impl ServerNode {
+    /// Atomically replace authorization and evict revoked sessions. Unchanged
+    /// credentials keep keys, packet counters, replay windows and IP leases.
+    /// Lock order is inner -> pool -> tags, also used by handshake/teardown.
+    pub async fn replace_tags(&self, mut replacement: TagTable) -> Result<usize> {
+        let mut inner = self.inner.lock().await;
+        let mut pool = self.pool.lock().await;
+        let mut current = self
+            .tags
+            .write()
+            .map_err(|_| Error::Config("tag table poisoned".into()))?;
+        let revoked: Vec<u32> = inner
+            .sessions
+            .iter()
+            .filter(|(_, s)| !replacement.contains_credential(&s.tag, &s.credential))
+            .map(|(tag, _)| *tag)
+            .collect();
+        for tag in &revoked {
+            if let Some(s) = inner.sessions.remove(tag) {
+                inner.routes.remove(&s.ip);
+                pool.release(s.ip);
+            }
+        }
+        // Preserve dedup for unchanged credentials: clearing it would allow a
+        // delayed HELLO to replace a surviving session and break live traffic.
+        inner
+            .handshakes
+            .retain(|(tag, _), cached| replacement.contains_credential(tag, &cached.credential));
+        for s in inner.sessions.values() {
+            replacement.bind_address(&s.tag, s.ip);
+        }
+        *current = replacement;
+        Ok(revoked.len())
+    }
+
     /// Wrap an already-bound socket and a tag table.
     #[must_use]
     pub fn new(
@@ -260,21 +297,20 @@ impl ServerNode {
             // The client said goodbye: acknowledge the Close and tear the
             // session down immediately instead of waiting for the idle
             // timeout. No further keepalive storm after the client left.
-            let (ip, table_tag);
+            let ip;
             {
                 let Some(s) = inner.sessions.get_mut(&tag) else {
                     return Ok(None);
                 };
                 flush_ack(s, &self.sock).await;
                 ip = s.ip;
-                table_tag = s.tag;
             }
             inner.sessions.remove(&tag);
             inner.routes.remove(&ip);
             let mut pool = self.pool.lock().await;
             pool.release(ip);
             if let Ok(mut t) = self.tags.write() {
-                t.release_ip(&table_tag);
+                t.release_address(ip);
             }
             tracing::debug!(session_tag = tag, %ip, "client closed session");
         }
@@ -361,13 +397,13 @@ impl ServerNode {
 
         if !expired.is_empty() {
             let mut pool = self.pool.lock().await;
-            for (tag, ip, table_tag) in expired {
+            for (tag, ip, _table_tag) in expired {
                 tracing::info!(session_tag = tag, %ip, "session expired after idle timeout");
                 inner.sessions.remove(&tag);
                 inner.routes.remove(&ip);
                 pool.release(ip);
                 if let Ok(mut t) = self.tags.write() {
-                    t.release_ip(&table_tag);
+                    t.release_address(ip);
                 }
             }
         }
@@ -399,6 +435,9 @@ impl ServerNode {
         now_us: u64,
         tcp: Option<&tokio::sync::mpsc::Sender<Vec<u8>>>,
     ) -> Result<Option<Vec<u8>>> {
+        // Serialize authorization with live snapshot replacement. Never verify
+        // against an old table and insert a session after its revocation.
+        let mut inner = self.inner.lock().await;
         let verified = {
             let tags = self
                 .tags
@@ -414,7 +453,6 @@ impl ServerNode {
             return Ok(None);
         };
 
-        let mut inner = self.inner.lock().await;
         let mut pool = self.pool.lock().await;
 
         // Repeat delivery of an already-completed handshake: answer with the
@@ -440,7 +478,9 @@ impl ServerNode {
         let stale: Vec<u32> = inner
             .sessions
             .iter()
-            .filter(|(_, s)| s.user_id == verified.user_id)
+            .filter(|(_, s)| {
+                s.user_id == verified.user_id && s.credential == credential_id(&verified.psk)
+            })
             .map(|(&t, _)| t)
             .collect();
         for tag in stale {
@@ -476,6 +516,7 @@ impl ServerNode {
                 peer: from,
                 tcp: tcp.cloned(),
                 user_id: verified.user_id,
+                credential: credential_id(&verified.psk),
                 tag: verified.tag,
                 ip,
                 ack: AckRanges::new(),
@@ -489,16 +530,21 @@ impl ServerNode {
             },
         );
         if let Ok(mut t) = self.tags.write() {
-            t.bind_ip(&verified.tag, ip);
+            // Rebuild any leases removed by reconnect or session-tag collision.
+            let live = inner.sessions.values().map(|s| s.ip).collect::<Vec<_>>();
+            for old in t.leased_ips() {
+                if !live.contains(&old) {
+                    t.release_address(old);
+                }
+            }
+            t.bind_address(&verified.tag, ip);
         }
         drop(pool);
-        drop(inner);
 
         // Remember this HelloAck so duplicate HELLOs (the anti-loss double
         // Initial and 500 ms retransmits) get the same answer, not a key
         // rotation. Cap the cache to bound memory.
         {
-            let mut inner = self.inner.lock().await;
             while inner.handshakes.len() >= HELLO_CACHE_MAX {
                 let Some(&victim) = inner.handshakes.keys().next() else {
                     break;
@@ -508,6 +554,7 @@ impl ServerNode {
             inner.handshakes.insert(
                 (verified.tag, verified.client_random),
                 CachedHello {
+                    credential: credential_id(&verified.psk),
                     ack: ack_datagram.clone(),
                     expires_us: now_us + HELLO_CACHE_TTL_US,
                 },
@@ -814,5 +861,83 @@ mod tests {
         let (node, _cfg) = node_and_config().await;
         let pkt = vec![0x45u8; 20];
         assert!(!node.seal_packet(&pkt, 0).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn live_snapshot_revokes_one_device_and_preserves_its_sibling() {
+        let (node, cfg) = node_and_config().await;
+        let key = cfg.tag_key;
+        node.replace_tags(
+            TagTable::build(&key, &[(42, "11".repeat(32)), (42, "33".repeat(32))]).unwrap(),
+        )
+        .await
+        .unwrap();
+        let mut sessions = Vec::new();
+        let mut hellos = Vec::new();
+        let mut addresses = Vec::new();
+        let mut clients = Vec::new();
+        for psk in [[0x11; 32], [0x33; 32]] {
+            let mut device = cfg.clone();
+            device.psk = psk;
+            let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let (state, hello) = handshake::start(&device, unix_now_secs()).unwrap();
+            node.handle(&hello, client.local_addr().unwrap(), 100, None)
+                .await
+                .unwrap();
+            let mut bytes = [0; packet::MAX_DATAGRAM];
+            let (n, _) = tokio::time::timeout(Duration::from_secs(2), client.recv_from(&mut bytes))
+                .await
+                .unwrap()
+                .unwrap();
+            let established = handshake::finish(&state, &bytes[..n]).unwrap();
+            addresses.push(established.assigned_ip);
+            sessions.push(Session::new(
+                established.keys,
+                established.session_tag,
+                TUNNEL_MTU,
+            ));
+            hellos.push(hello);
+            clients.push(client);
+        }
+        assert_ne!(addresses[0], addresses[1]);
+        assert_eq!(node.stats().await.sessions, 2);
+        let before = node.stats().await.handshakes;
+        assert_eq!(
+            node.replace_tags(TagTable::build(&key, &[(42, "33".repeat(32))]).unwrap())
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(node.stats().await.sessions, 1);
+        for (index, session) in sessions.iter().enumerate() {
+            let mut pkt = vec![0x45; 20];
+            pkt[12..16].copy_from_slice(&addresses[index].octets());
+            let (_, encrypted) = session.seal_ip(&pkt).unwrap();
+            let received = node
+                .handle(&encrypted, clients[index].local_addr().unwrap(), 200, None)
+                .await
+                .unwrap();
+            assert_eq!(received.is_some(), index == 1);
+        }
+        // A previously cached HELLO must not resurrect the revoked device.
+        node.handle(&hellos[0], clients[0].local_addr().unwrap(), 300, None)
+            .await
+            .unwrap();
+        assert_eq!(node.stats().await.handshakes, before);
+        assert_eq!(node.stats().await.rejected_handshakes, 1);
+        assert_eq!(node.tags.read().unwrap().leased_ips(), vec![addresses[1]]);
+        // A delayed surviving HELLO remains idempotent across a hot snapshot.
+        node.handle(&hellos[1], clients[1].local_addr().unwrap(), 350, None)
+            .await
+            .unwrap();
+        assert_eq!(node.stats().await.handshakes, before);
+        // Re-applying the same authorization keeps the surviving session.
+        assert_eq!(
+            node.replace_tags(TagTable::build(&key, &[(42, "33".repeat(32))]).unwrap())
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(node.stats().await.sessions, 1);
     }
 }

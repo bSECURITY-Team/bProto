@@ -583,6 +583,11 @@ async fn create_client_impl(
     let sub_id = random_token()[..32].to_string();
     let psk = keys::generate_psk();
 
+    let label = body.label.unwrap_or_else(|| "device".into());
+    if label.trim().is_empty() || label.len() > 64 {
+        return Err(ApiError::bad_request("label must be 1-64 characters"));
+    }
+    let mut tx = state.db.begin().await?;
     let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, is_admin, traffic_limit_bytes, \
          traffic_used_bytes, expires_at, status, created_at, inbound_id, sub_id, note) \
@@ -597,11 +602,10 @@ async fn create_client_impl(
     .bind(inbound_id)
     .bind(&sub_id)
     .bind(body.note.as_deref())
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| ApiError::new(StatusCode::CONFLICT, format!("cannot create client: {e}")))?;
 
-    let label = body.label.unwrap_or_else(|| "device".into());
     let tag = keys::compute_tag(&state.tag_key, user_id as u64);
     let key_id: i64 = sqlx::query_scalar(
         "INSERT INTO keys (user_id, label, psk, tag, status, created_at) \
@@ -612,11 +616,12 @@ async fn create_client_impl(
     .bind(&psk[..])
     .bind(&tag[..])
     .bind(now())
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
 
     let uri = config_for(state, user_id, &inbound, psk, &label)?;
     let mut resp = config_response(&uri)?;
+    tx.commit().await?;
     let base = subs::sub_base_url(state, headers).await;
     resp["user_id"] = json!(user_id);
     resp["sub_id"] = json!(sub_id);

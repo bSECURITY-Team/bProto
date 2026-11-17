@@ -202,6 +202,7 @@ impl ServerConfig {
         if self.tun.mtu > vpn_core::packet::MAX_DATAGRAM as u16 {
             anyhow::bail!("tun.mtu must be <= {}", vpn_core::packet::MAX_DATAGRAM);
         }
+        self.tag_table()?;
         Ok(())
     }
 

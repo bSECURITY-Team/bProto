@@ -23,7 +23,7 @@ Read §0 before you start — it is the honest list of what works today.
 | Client: TUN, address, default-route takeover with rollback | **works** (needs root/CAP_NET_ADMIN) |
 | CUBIC + ACK ranges + RTT + keepalive | **works** |
 | Control panel: login, inbounds, keys, QR, subscriptions, stats | **works, 37 tests** |
-| Panel → server key push (admin API) | **not wired** — see §5.5, you copy the key once |
+| Panel → server key push (existing mTLS agent) | **opt-in, one inbound** — Linux TUN create/apply/revoke tested; see KEY-SYNC.md and §5.5 |
 | Automatic DNS configuration on the client | **not implemented** — see §4.6 |
 | Android app | **runs end to end on an emulator** (API 35): handshake, `tun0` lease, traffic through the tunnel; not yet run on a phone — see §6 |
 | iOS app | **scaffolded only** — Swift never compiled (no macOS) — see §7 |
@@ -32,7 +32,7 @@ Read §0 before you start — it is the honest list of what works today.
 
 In one sentence: this is a working, encrypted, tested VPN **protocol and
 server**, with a working control panel. It is not yet a DPI-resistant product,
-and you have to wire the panel→server key sync by hand.
+and automatic panel→server synchronization requires explicit mTLS-agent provisioning.
 
 ---
 
@@ -424,7 +424,7 @@ Environment variables the backend reads:
 | `BPROTO_TAG_KEY` | **required**, 32-byte hex; the routing tag key |
 | `BPROTO_DB` | SQLite URL, default `sqlite://panel.db?mode=rwc` |
 | `BPROTO_LISTEN` | default `127.0.0.1:8080` |
-| `BPROTO_ADMIN_PASSWORD` | password for the bootstrap `admin`; random if unset |
+| `BPROTO_ADMIN_PASSWORD` | required for the first bootstrap administrator; never printed in logs |
 | `BPROTO_INTERNAL_TOKEN` | bearer token for `/internal/v1/sessions/report` |
 | `BPROTO_ALLOW_PRIVATE_SUBS` | allow subscriptions to private IPs (off by default) |
 
@@ -457,12 +457,15 @@ page (its change-password form signs out the account's other sessions) or via
 `user_id` in the URI is the panel's user id, and the URI contains the `psk` the
 panel generated — that pair is what `server.toml` needs next.
 
-### 5.5 Wiring the panel's keys into the server (one manual step)
+### 5.5 Wiring the panel's keys into the server
 
-The panel is the source of truth for keys; the server is not yet subscribed to
-it (the admin API in `crates/vpn-server/src/admin.rs` is a guarded stub, and the
-gRPC push is stage-2 work). So after issuing a key, copy its identity into
-`server.toml` **once**:
+Automatic mode uses the existing mTLS configuration agent, not the legacy gRPC
+stub. Follow [KEY-SYNC.md](KEY-SYNC.md) / [KEY-SYNC.ru.md](KEY-SYNC.ru.md).
+It validates tag-key equality, applies a managed TOML region, hot reloads users
+and revokes live sessions. Check applied status before relying on delivery.
+
+Without agent provisioning, use this manual procedure. After issuing a key,
+copy its identity into `server.toml` privately:
 
 ```sh
 # The URI contains both values:
@@ -481,10 +484,10 @@ Then:
 sudo systemctl restart bproto-server
 ```
 
-Revocation is the reverse: delete the block (or the user with
-`POST /api/keys/{id}/revoke` in the panel) and restart the server. Do this before
-you rely on the panel for anything security-critical, and remember that a
-restart is required — the server keeps the tag table in memory only.
+Manual revocation requires removing the static block and restarting the server.
+Revoking in the panel alone does not delete a manually provisioned static PSK.
+The agent rejects overlapping static/managed users, including disabled users;
+migrate duplicate static entries before enabling automatic delivery.
 
 ---
 

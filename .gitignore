@@ -8,6 +8,10 @@ node_modules
 dist
 .DS_Store
 *.pem
+*.jks
+*.keystore
+keystore.properties
+signing.properties
 *.tsbuildinfo
 
 # Android app: the native libraries are build output, not source.

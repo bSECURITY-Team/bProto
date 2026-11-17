@@ -42,6 +42,10 @@ struct Cli {
     /// still answers handshakes and logs traffic, but packets have nowhere to go.
     #[arg(long)]
     datapath: bool,
+
+    /// Private Unix socket for credential-only hot reload by the mTLS agent.
+    #[arg(long)]
+    control_socket: Option<PathBuf>,
 }
 
 fn init_tracing() {
@@ -196,6 +200,18 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    if let Some(path) = cli.control_socket {
+        let listener = vpn_server::control::bind(&path).await?;
+        let node = Arc::clone(&node);
+        tokio::spawn(async move {
+            if vpn_server::control::serve(listener, cli.config, cfg, node)
+                .await
+                .is_err()
+            {
+                tracing::error!("local configuration control stopped");
+            }
+        });
+    }
     serve(node, splicer, device, boot).await
 }
 
