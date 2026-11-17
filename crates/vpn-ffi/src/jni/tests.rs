@@ -59,7 +59,7 @@ fn start_server(rt: &tokio::runtime::Runtime) -> Harness {
             let Ok((n, from)) = reader.socket().recv_from(&mut buf).await else {
                 break;
             };
-            if let Ok(Some(pkt)) = reader.handle(&buf[..n], from, 0).await {
+            if let Ok(Some(pkt)) = reader.handle(&buf[..n], from, 0, None).await {
                 let _ = to_tun_tx.send(pkt).await;
             }
         }
@@ -79,6 +79,8 @@ fn client_config(server: SocketAddr) -> TunnelConfig {
         fingerprint: Fingerprint::Chrome112,
         stealth: StealthLevel::Off,
         handshake_timeout: Duration::from_secs(3),
+        shape: vpn_core::shape::ShapeConfig::default(),
+        transport: vpn_core::TransportKind::Udp,
     }
 }
 
