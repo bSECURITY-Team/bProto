@@ -1,6 +1,6 @@
 # Orbit implementation validation
 
-## Main merge and hosted CI follow-up / Слияние в main и CI — 2026-11-17
+## Hosted CI follow-up / CI и границы приёмки — 2026-11-17
 
 The target main advanced to 1d95122 (merged upstream PR #4) after the original
 credential implementation. The key-sync branch now integrates that main:
@@ -25,8 +25,31 @@ GitHub Actions workflow run 44149376524 for main failed in the Linux panel job:
 panel build; `cargo test` only builds the panel test harness. A follow-up change
 adds `cargo build --locked --release --manifest-path panel/backend/Cargo.toml`
 before the e2e test. The exact e2e passed locally with release binaries (8.893 s).
-Hosted validation of that fix is pending. This is not a hosted green check or
-a 3.0.0 release.
+PR #8 adds that build and an Android release smoke job using an ephemeral
+generated signer. Hosted PR run 44152774468 passed Linux/panel, native
+create/apply/revoke handshake, isolated namespace kernel TUN credential lab,
+Android three-ABI build, and installer/QUIC checks. At the time of this update,
+the Android release smoke job is still running; its completion and signature
+verification need a subsequent check. The push run 44152763735 passed its
+Linux/panel, Android debug, and installer jobs; it skipped the PR-only smoke.
+The ephemeral signing job, even when green, does not prove signing with the
+permanent repository key, a trusted-tag release, or upgrade/reimport on a device.
+PR #8 remains unmerged. This is not a 3.0.0 release.
+
+### 3.0 release gates still open / Открытые ворота релиза 3.0
+
+| Goal | State and exact boundary |
+| --- | --- |
+| Panel key sync | Implemented and checked through panel → mTLS agent → live server; create/apply/revoke and rejected post-revoke handshake passed. Hosted isolated Linux TUN test also passed. Production systemd and multi-replica recovery are not covered. |
+| Android signing | Signing config and trusted-tag workflow exist. Hosted debug APK and 3 ABI build passed; permanent-key signed artifact and Android install/upgrade/reimport are not yet verified. |
+| TLS/HTTP3/WSS | Isolated hosted protocol integration checks pass. Full per-transport failure matrix, device VPN datapath, timeout/interruption behavior remain incomplete. |
+| ECH | Required-client emission and fail-closed rejection checks exist; accepting ECH termination + carrier e2e and config discovery/rotation are not implemented/verified. |
+| IPv6 | Native forwarding is not implemented. Client fail-closed capture/drop behavior remains; no leak-free IPv6 datapath claim. |
+| RTT/failover | No RTT ranking or cross-server live session migration. Existing same-server authenticated rebinding does not preserve a TCP flow across independent server/NAT state. |
+| Domain routing | No domain policy engine. Current rules are CIDR, DNS configuration and app exclusions; no DNS attribution, CDN churn handling or schema updates. |
+
+Do not tag v3.0.0 while any required gate is open. The exact platform and
+capability evidence from the earlier key-sync validation remains below.
 
 ## Credential synchronization / Синхронизация ключей — 2026-11-17
 

@@ -176,7 +176,7 @@ jobs:
           gradle --no-daemon -p apps/android assembleRelease testReleaseUnitTest
           apk=apps/android/app/build/outputs/apk/release/app-release.apk
           apksigner="$ANDROID_HOME/build-tools/35.0.0/apksigner"
-          fingerprint="$("$apksigner" verify --verbose --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+          fingerprint="$("$apksigner" verify --verbose --print-certs "$apk" 2>&1 | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
           test -n "$fingerprint"
           printf 'BPROTO_ANDROID_SIGNER_SHA256=%s\n' "$fingerprint" >> "$GITHUB_ENV"
           python3 tools/android_release.py verify --apksigner "$apksigner" --apk "$apk"
