@@ -61,6 +61,7 @@ jobs:
           cargo build --locked -p vpn-core --features ech --example h3_bridge
           BPROTO_TEST_BIN_DIR=target/release /tmp/native-carriers/bin/python -m unittest discover -s tests -p test_ech.py -v
       - run: cargo test --locked --manifest-path panel/backend/Cargo.toml
+      - run: cargo build --locked --release --manifest-path panel/backend/Cargo.toml
       - name: Panel mTLS create apply revoke with native handshake
         env:
           BPROTO_TEST_BIN_DIR: target/release

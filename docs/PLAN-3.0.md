@@ -1,12 +1,13 @@
 # 3.0 acceptance state / Состояние приёмки 3.0
 
 This branch is development toward 3.0.0, not a completed or published release.
-Версия 3.0.0 не объявлена и release tag не создан. Базовая версия остаётся 2.5.0.
+Версия 3.0.0 не объявлена и release tag не создан. Текущая базовая версия кода — 2.5.0.
 
 Canonical repository: https://github.com/bSECURITY-Team/bProto.
-The repository transferred without changing its d1081b3 baseline. Git and the
-GitHub integration can read it but writes return HTTP 403. No implementation
-commits or PRs have been published there from this workspace.
+The key-sync and Android signing work has been merged into `main`. PR #6 merged
+credential synchronization; PR #5 merged Android release signing. PR #7 was a
+duplicate stacked draft and was closed after confirming its changes were covered
+by #5. Main HEAD at the last check is `0d44a597`.
 
 ## Current deliverables / Текущие результаты
 
@@ -22,15 +23,9 @@ commits or PRs have been published there from this workspace.
 No transport disguise, invisibility or censorship-evasion guarantee is claimed.
 Обещания обхода блокировок и незаметности не добавлялись.
 
-## Branches and validation / Ветки и проверки
+## Validation / Проверки
 
-- feat/3.0-key-sync: authentication model, private server IPC, existing-agent TOML
-  adapter, durable outbox/recovery, real TUN acceptance, UI and RU/EN docs.
-- ci/3.0-android-release-signing: stacked on the first branch; signing secrets
-  configuration, artifact identity gate, CI publication dependency and RU/EN
-  signer rotation/debug migration procedures.
-
-Full workspace: 148 passed, one unchanged ignored donor skeleton. Panel: 65
+Integrated full workspace: 163 passed, one unchanged ignored donor skeleton. Panel: 65
 passed. Agent: 7 legacy and 9 users-adapter tests passed, 73% statement coverage
 with the original 70% gate retained. Full workspace and panel clippy passed.
 The final native server includes the hot-reload HELLO-dedup regression fix.
@@ -38,20 +33,22 @@ See [ORBIT-VALIDATION](ORBIT-VALIDATION.md) for exact platform and capability sc
 
 ## Remaining work / Следующая работа
 
-Resume the prioritized implementation sequence after reviewing/publishing the
-first deliverables. Do not mark later goals complete based on names or unit
-fixtures. Continue with actual signing validation when repository secrets and
-hosted execution are available, then the isolated transport failure matrix and
-an accepting ECH frontend, dual-stack leases/routing/leak tests, bounded RTT
-selection and same-server migration, and finally DNS-attributed domain rules.
+The hosted `main` workflow failed in the Linux panel job because the key-sync
+e2e step was pointed at `panel/backend/target/release/panel` without building
+that release binary. The local correction explicitly runs the release build and
+the same e2e then passes. Re-run the hosted workflow after publishing this fix.
+Other open gates are actual Android signing/upgrade validation, transport failure
+matrix and an accepting ECH frontend, native IPv6 forwarding/leak tests, RTT
+selection and live-session migration, and DNS-attributed domain rules.
 
 For cross-server uninterrupted TCP, first design preserved tunnel/egress
 addresses and routing/conntrack ownership. Independent server reconnect alone
 does not satisfy that goal. For domain routing, agree shared-CDN/DoH ambiguity
 and schema-1 behavior before wiring a resolver.
 
-Публикация заблокирована конкретным 403, а не отсутствием разрешения пользователя.
-Signing secrets задаются в GitHub settings; не передавайте их в чат.
+Права GitHub восстановлены, изменения уже находятся в `main`. Release tag
+откладывается до прохождения CI и оставшихся gates. Signing secrets задаются в
+GitHub settings; не передавайте их в чат.
 Количество коммитов не используется как доказательство готовности: пустые коммиты
-и искусственное дробление ради числа 500 не создавались. Проверенные изменения
-сохраняются локально; незавершённые цели остаются явно открытыми.
+и искусственное дробление ради числа 500 не создавались. Изменения уже в `main`;
+CI и незавершённые цели остаются явно открытыми.
