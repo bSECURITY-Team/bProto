@@ -14,7 +14,13 @@ fn real_crafted_parrot_roundtrips_through_inspect() {
         sni: "tesla.com".into(),
         alpn: vec!["h3".into()],
         fingerprint: Fingerprint::Chrome112,
-        session_id: auth::derive_session_id(&psk, &tag, &random, &x25519, vpn_core::unix_now_secs()),
+        session_id: auth::derive_session_id(
+            &psk,
+            &tag,
+            &random,
+            &x25519,
+            vpn_core::unix_now_secs(),
+        ),
         client_random: random,
         x25519_pub: x25519,
     };
@@ -22,11 +28,13 @@ fn real_crafted_parrot_roundtrips_through_inspect() {
     println!("parrot len = {}", parrot.len());
     match inspect_client_hello(&parrot) {
         Ok(h) => {
-            println!("OK: sid={:?} sni={:?}", h.session_id.map(|s| hex(s)), h.sni);
+            println!("OK: sid={:?} sni={:?}", h.session_id.map(hex), h.sni);
             assert_eq!(h.session_id, Some(params.session_id));
         }
         Err(e) => panic!("inspect failed: {e}"),
     }
 }
 
-fn hex(b: [u8; 32]) -> String { b.iter().map(|x| format!("{x:02x}")).collect() }
+fn hex(b: [u8; 32]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}

@@ -1,0 +1,9 @@
+[2m2026-11-17T17:37:14.849848Z[0m [33m WARN[0m [2mvpn_core::session[0m[2m:[0m udp handshake failed; falling back to the tcp transport [3merror[0m[2m=[0mhandshake timed out
+[2m2026-11-17T17:37:15.249847Z[0m [32m INFO[0m [2mvpn_core::session[0m[2m:[0m tunnel established [3mtransport[0m[2m=[0m"tcp"
+tunnel up:
+  assigned address : 10.66.0.2
+  MTU              : 1251
+[2m2026-11-17T17:37:15.250032Z[0m [32m INFO[0m [2mbproto[0m[2m:[0m stats [3mrtt_ms[0m[2m=[0m333.0 [3mcwnd[0m[2m=[0m12510 [3mrx[0m[2m=[0m0 [3mtx[0m[2m=[0m0 [3mdropped[0m[2m=[0m0 [3muptime_s[0m[2m=[0m0
+SOCKS5 proxy listening on 127.0.0.1:1080
+  tunnel address: 10.66.0.2
+  try: curl --socks5-hostname 127.0.0.1:1080 http://example.com

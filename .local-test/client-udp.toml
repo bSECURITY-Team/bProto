@@ -1,0 +1,23 @@
+# VPS deployment test client (matches /tmp/bproto/server.toml on 72.61.171.192)
+server = "72.61.171.192:45001"
+user_id = 1
+psk = "3ed142971600f5c3bf973edd91eefd311dfe4c1fbdd4f70dd1abf676f2d5dd75"
+tag_key = "4a00903020e5f4f56f331c6aeb3dbd1baadd887e28f1c80099df9e310af60a10"
+mtu = 1280
+fingerprint = "chrome112"
+stealth = "off"
+handshake_timeout = "10s"
+
+# Wire transport: udp | tcp | auto
+transport = "udp"
+
+# Chrome HTTP/3 masquerade: real QUIC Initial + padded HELLO, TTL 64, DF
+[shape]
+profile = "chrome-quic"
+
+[socks5]
+listen = "127.0.0.1:1080"
+dns = "1.1.1.1"
+
+[donor]
+sni = "tesla.com"
