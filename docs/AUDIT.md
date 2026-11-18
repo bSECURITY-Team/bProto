@@ -111,3 +111,34 @@ ignored); 13 ECH/interoperability tests passed; 34 Android JVM tests passed.
 All three native Android ABIs and the APK built successfully; frontend build passed.
 Required-ECH Android selections filter out non-ECH fallback candidates.
 These results do not include successful ECH acceptance or device runtime.
+
+## Android timeout fix (current branch)
+
+The "connected but every request times out" failure was an Android-side black
+hole, not a server/NAT/CLI issue. `094d872` added a route-only `::/0` capture
+without an IPv6 address while the datapath remained IPv4-only; `jni.rs` dropped
+non-IPv4 packets with no ICMPv6, so v6 connects waited for a full TCP timeout.
+
+Current-branch changes:
+
+- `BprotoVpnService.establishTunnel()` no longer attempts route-only `::/0`.
+  Full capture (IPv6 ULA address + `::/0`) is answered with ICMPv6 "no route
+  to destination"; if the OEM refuses it, the service establishes IPv4-only and
+  publishes a leak warning instead of returning `null` and aborting the pump.
+- `jni.rs` builds a checksummed ICMPv6 error (RFC 4443/1071), skips multicast,
+  ND, ICMPv6 errors and unparsable extension-header chains, and injects the
+  reply back into the tun writer. Send/MTU errors are logged and the packet is
+  dropped like the Linux CLI instead of killing the whole pump. `pumpActive()`,
+  `reset()` and `stats()` are exposed; the service announces "connected" only
+  after the pump is actually running and propagates pump errors.
+- `vpn-core` now installs a pre-connect `protect(fd)` hook used by both UDP and
+  TCP sockets. `Wire::Tcp` keeps a live descriptor, so `socket_fd()` returns a
+  real fd instead of `-1`. Kotlin `VpnProtector` protects native, QUIC, TLS,
+  WSS and local relay sockets, tracks them, and re-protects on default-network
+  changes together with `setUnderlyingNetworks()`.
+- Unit tests cover ICMPv6 checksum/quoting/filters, the socket-protect hook and
+  the surviving pump after an oversized packet. Host-side Android tests cover
+  protect-before-connect for WSS. No Android device/VpnService e2e run, real
+  TUN test or live-server validation was available in this sandbox (`cargo` and
+  Gradle are absent, `/dev/net/tun` exists but is root-only); that remains an
+  open acceptance gate.

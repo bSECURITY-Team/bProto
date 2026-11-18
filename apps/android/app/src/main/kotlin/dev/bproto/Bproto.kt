@@ -14,7 +14,8 @@ package dev.bproto
  *
  * Threading contract (matches `crates/vpn-ffi/src/jni.rs`):
  *   [connect] and [pump] block — call them from a worker thread you own.
- *   [stop] is safe from any thread.
+ *   [stop], [reset], [pumpActive] and [stats] are safe from any thread.
+ *   [setSocketProtector] must be installed before [connect] and cleared after.
  */
 object Bproto {
 
@@ -38,8 +39,25 @@ object Bproto {
     /** Address leased by the server, e.g. `"10.66.0.2"`. Empty on failure. */
     external fun assignedIp(handle: Long): String
 
-    /** UDP descriptor of the server link. Pass it to `VpnService.protect`. */
+    /** Descriptor of the server link (UDP or TCP). Pass it to `VpnService.protect`. */
     external fun socketFd(handle: Long): Int
+
+    /**
+     * Install the object whose `protectFd(Int): Boolean` calls
+     * `VpnService.protect`. Must be set **before** [connect]: the native UDP and
+     * TCP sockets are created and marked before the handshake's first packet.
+     * Pass `null` to detach the callback at the end of a session.
+     */
+    external fun setSocketProtector(protector: Any?)
+
+    /** Clear a stale [stop] request at the start of a new connection attempt. */
+    external fun reset()
+
+    /** 1 while the native packet pump is actually running, 0 otherwise. */
+    external fun pumpActive(): Int
+
+    /** Human-readable counters for logcat / diagnostics. */
+    external fun stats(handle: Long): String
 
     /**
      * Move packets between the tunnel and a tun descriptor until [stop] is

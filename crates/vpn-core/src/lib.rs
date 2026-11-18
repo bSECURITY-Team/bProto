@@ -41,6 +41,7 @@ pub mod replay;
 pub mod server;
 pub mod session;
 pub mod shape;
+pub mod socket_protect;
 pub mod tags;
 pub mod transport;
 

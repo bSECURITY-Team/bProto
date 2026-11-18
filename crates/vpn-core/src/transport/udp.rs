@@ -26,6 +26,11 @@ pub async fn bind_for(peer: SocketAddr, ttl: u8, df: bool) -> Result<UdpSocket> 
     };
     let bound = std::net::UdpSocket::bind(local)
         .map_err(|e| Error::Transport(format!("bind {local}: {e}")))?;
+    // Android: mark the socket as bypassing the VPN *before* the first
+    // handshake datagram. `bproto_socket_fd()` can only protect after the fact,
+    // which is already too late if `0.0.0.0/0` is installed by another app or
+    // the link has to be re-established on a network change.
+    bind_protect(&bound)?;
     if peer.is_ipv4() {
         // Browser-socket IP shape, driven by the shape profile: TTL is the
         // Linux default, pinned so exotic boxes that ship another default
@@ -39,6 +44,18 @@ pub async fn bind_for(peer: SocketAddr, ttl: u8, df: bool) -> Result<UdpSocket> 
         .set_nonblocking(true)
         .map_err(|e| Error::Transport(format!("nonblocking: {e}")))?;
     UdpSocket::from_std(bound).map_err(|e| Error::Transport(format!("tokio socket: {e}")))
+}
+
+/// Run the platform's `VpnService.protect(fd)` hook on a freshly bound socket.
+#[cfg(unix)]
+fn bind_protect(bound: &std::net::UdpSocket) -> Result<()> {
+    use std::os::fd::AsRawFd;
+    crate::socket_protect::protect_socket(bound.as_raw_fd())
+}
+
+#[cfg(not(unix))]
+fn bind_protect(_bound: &std::net::UdpSocket) -> Result<()> {
+    Ok(())
 }
 
 /// Send one datagram.

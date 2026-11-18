@@ -214,6 +214,38 @@ fn pump_moves_packets_both_ways() {
         .expect("channel open");
     assert_eq!(arrived, up, "the packet must arrive unmodified");
 
+    // One oversized IPv4 packet must be dropped and logged, not kill the pump
+    // (the Linux CLI has always continued here). A following valid packet has
+    // to reach the server unchanged.
+    let mut oversized = ip_packet([10, 66, 0, 2], [10, 66, 0, 1], 0xA9);
+    oversized.resize(2_000, 0xA9);
+    write_packet(app_fd, &oversized);
+    let up2 = ip_packet([10, 66, 0, 2], [10, 66, 0, 1], 0xA2);
+    write_packet(app_fd, &up2);
+    let arrived2 = rt
+        .block_on(async {
+            tokio::time::timeout(Duration::from_secs(2), harness.to_tun.recv()).await
+        })
+        .expect("the server must deliver the second packet within 2s")
+        .expect("channel open");
+    assert_eq!(arrived2, up2, "pump must survive an oversized packet");
+
+    // Captured IPv6 must come back as an ICMPv6 error, not disappear into a
+    // black hole with no route and no RST.
+    let v6_src = [
+        0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
+    ];
+    let v6_dst = [
+        0x26, 0x06, 0x47, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+    ];
+    write_packet(app_fd, &ipv6_tcp(v6_src, v6_dst));
+    let icmp = read_packet(app_fd, Duration::from_secs(2))
+        .expect("captured IPv6 must produce an immediate ICMPv6 error");
+    assert_eq!(icmp[0] >> 4, 6, "the reply is IPv6");
+    assert_eq!(icmp[40], 1, "destination unreachable");
+    assert_eq!(icmp[41], 0, "no route to destination");
+    assert!(icmpv6_checksum_is_valid(&icmp));
+
     // Downlink: server -> descriptor.
     let down = ip_packet([1, 1, 1, 1], [10, 66, 0, 2], 0xB2);
     let sent = rt
@@ -231,4 +263,118 @@ fn pump_moves_packets_both_ways() {
         .expect("pump must return after stop()");
     assert!(rc.is_ok(), "clean stop expected, got {rc:?}");
     pump_thread.join().expect("pump thread must not panic");
+}
+
+/// A minimal IPv6 + TCP packet, the shape Android feeds the tun when `::/0`
+/// is captured and an app tries an AAAA address first.
+fn ipv6_tcp(src: [u8; 16], dst: [u8; 16]) -> Vec<u8> {
+    let mut p = vec![0u8; 60];
+    p[0] = 0x60;
+    p[4..6].copy_from_slice(&20u16.to_be_bytes());
+    p[6] = 6; // TCP
+    p[7] = 64;
+    p[8..24].copy_from_slice(&src);
+    p[24..40].copy_from_slice(&dst);
+    p[40..42].copy_from_slice(&40_000u16.to_be_bytes());
+    p[42..44].copy_from_slice(&443u16.to_be_bytes());
+    p[53] = 0x02; // SYN
+    p
+}
+
+/// The ICMPv6 error checksum covers the IPv6 pseudo-header as well.
+fn icmpv6_checksum_is_valid(reply: &[u8]) -> bool {
+    let mut input = Vec::new();
+    input.extend_from_slice(&reply[8..24]); // src of the reply
+    input.extend_from_slice(&reply[24..40]); // dst of the reply
+    input.extend_from_slice(&((reply.len() - 40) as u32).to_be_bytes());
+    input.extend_from_slice(&[0, 0, 0, 58]);
+    input.extend_from_slice(&reply[40..]);
+    super::internet_checksum(&input) == 0
+}
+
+#[test]
+fn captured_ipv6_is_rejected_with_a_valid_icmpv6_error() {
+    let src = [
+        0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
+    ];
+    let dst = [
+        0x26, 0x06, 0x47, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+    ];
+    let original = ipv6_tcp(src, dst);
+    let reply = super::icmpv6_no_route(&original).expect("a TCPv6 packet must be answered");
+    assert_eq!(reply[0] >> 4, 6, "the reply is an IPv6 packet");
+    assert_eq!(reply[6], 58, "next header is ICMPv6");
+    assert_eq!(&reply[8..24], &super::V6_GATEWAY[..]);
+    assert_eq!(&reply[24..40], &src[..], "the error goes back to the sender");
+    assert_eq!(reply[40], 1, "destination unreachable");
+    assert_eq!(reply[41], 0, "no route to destination");
+    assert_eq!(&reply[48..], &original[..], "the whole packet is quoted");
+    assert!(icmpv6_checksum_is_valid(&reply), "ICMPv6 checksum must verify");
+}
+
+#[test]
+fn icmpv6_errors_are_not_sent_for_multicast_nd_or_ipv4() {
+    let src = [
+        0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
+    ];
+    let dst = [
+        0x26, 0x06, 0x47, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+    ];
+    // Multicast destination (neighbour solicitation) is dropped silently.
+    let mut nd = ipv6_tcp(src, dst);
+    nd[24] = 0xff;
+    nd[6] = 58;
+    nd[40] = 135;
+    assert!(super::icmpv6_no_route(&nd).is_none());
+    // Unspecified source (DAD) is dropped silently.
+    let mut dad = ipv6_tcp(src, dst);
+    dad[8..24].fill(0);
+    assert!(super::icmpv6_no_route(&dad).is_none());
+    // ICMPv6 errors must never trigger another error (RFC 4443 §2.4).
+    let mut err = ipv6_tcp(src, dst);
+    err[6] = 58;
+    err[40] = 1;
+    assert!(super::icmpv6_no_route(&err).is_none());
+    // An IPv4 packet never goes down the v6 path, and a short packet is safe.
+    let v4 = ip_packet([10, 66, 0, 2], [1, 1, 1, 1], 0xA1);
+    assert!(super::icmpv6_no_route(&v4).is_none());
+    assert!(super::icmpv6_no_route(&[0x60, 0, 0]).is_none());
+}
+
+#[test]
+fn long_ipv6_packets_are_quoted_within_a_safe_size() {
+    let src = [
+        0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
+    ];
+    let dst = [
+        0x26, 0x06, 0x47, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+    ];
+    let mut original = ipv6_tcp(src, dst);
+    original.resize(10_000, 0xAB);
+    original[4..6].copy_from_slice(&((original.len() - 40) as u16).to_be_bytes());
+    let reply = super::icmpv6_no_route(&original).expect("long packet is still answered");
+    assert_eq!(reply.len(), 40 + 8 + super::ICMPV6_QUOTE);
+    assert!(reply.len() <= 1251, "must fit the Android tun MTU");
+    assert!(icmpv6_checksum_is_valid(&reply));
+}
+
+#[test]
+fn icmpv6_error_walks_a_hop_by_hop_header() {
+    let src = [
+        0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
+    ];
+    let dst = [
+        0x26, 0x06, 0x47, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+    ];
+    let mut original = ipv6_tcp(src, dst);
+    // A hop-by-hop options header (8 bytes) followed by the TCP header.
+    original[6] = 0;
+    original.insert(40, 6); // next header = TCP
+    original.insert(41, 0); // Hdr Ext Len = 0 => 8 bytes
+    original.resize(40 + 8 + 20 + 2, 0);
+    original[48] = 0x02; // SYN, so the quoted TCP header is meaningful
+    let reply = super::icmpv6_no_route(&original)
+        .expect("TCP behind hop-by-hop options must be answered");
+    assert_eq!(reply[40], 1);
+    assert!(icmpv6_checksum_is_valid(&reply));
 }

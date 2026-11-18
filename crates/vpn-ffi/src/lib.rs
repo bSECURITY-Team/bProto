@@ -154,11 +154,13 @@ fn tunnel_ref<'a>(tunnel: *mut BprotoTunnel) -> Result<&'a BprotoTunnel, &'stati
     unsafe { tunnel.as_ref() }.ok_or("tunnel handle is null")
 }
 
-/// Raw descriptor of the tunnel's UDP socket, or -1 on failure.
+/// Raw descriptor of the tunnel's server socket (UDP or TCP), or -1 on failure.
 ///
 /// Android needs it to call `VpnService.protect(fd)` before the tunnel starts
 /// carrying traffic; iOS and Linux builds can ignore it. The descriptor stays
-/// owned by the tunnel — never close it.
+/// owned by the tunnel — never close it. TCP fallback is included: an
+/// unprotected TCP stream loops back into the tun just like an unprotected UDP
+/// socket does.
 ///
 /// # Safety
 ///

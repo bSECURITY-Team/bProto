@@ -3,6 +3,8 @@ package dev.bproto
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.net.Socket
+import java.nio.channels.SocketChannel
 import java.util.concurrent.atomic.AtomicBoolean
 import okhttp3.*
 import okhttp3.mockwebserver.MockResponse
@@ -15,6 +17,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WssCarrierTest {
+    /** Stand-in for the Android VpnService protector in host-side JVM tests. */
+    private class TestProtector(
+        private val onSocket: (Socket) -> Boolean = { true },
+    ) : SocketProtector {
+        override fun protectFd(fd: Int) = true
+        override fun protectSocket(socket: Socket, peer: InetAddress?) = onSocket(socket)
+        override fun protectDatagram(socket: DatagramSocket) = true
+        override fun createSocket(peer: InetAddress?) = SocketChannel.open().socket()
+    }
+
     private fun config(url: String) = JSONObject().put("wss", JSONObject()
         .put("url", url).put("token", "a".repeat(64)))
 
@@ -29,10 +41,13 @@ class WssCarrierTest {
 
     @Test fun protectsSocketBeforeConnection() {
         var called = false
-        val socket = ProtectedSocketFactory { called = true; assertFalse(it.isConnected); true }.createSocket()
+        val protector = TestProtector { called = true; assertFalse(it.isConnected); true }
+        val socket = ProtectedSocketFactory(protector).createSocket()
         socket.close()
         assertTrue(called)
-        assertThrows(IllegalStateException::class.java) { ProtectedSocketFactory { false }.createSocket() }
+        assertThrows(IllegalStateException::class.java) {
+            ProtectedSocketFactory(TestProtector { false }).createSocket()
+        }
     }
 
     @Test fun realTlsWebSocketUdpRoundTrip() {
@@ -50,9 +65,11 @@ class WssCarrierTest {
         try {
             val url = server.url("/bproto").toString().replace("https://", "wss://")
             val builder = OkHttpClient.Builder().sslSocketFactory(clientTls.sslSocketFactory(), clientTls.trustManager)
-            WssCarrier.connect(WssProfile(url, "a".repeat(64)), {
+            val protector = TestProtector {
                 assertFalse(it.isConnected); protected.set(true); true
-            }, { failed.set(true) }, builder).use { carrier ->
+            }
+            WssCarrier.connect(WssProfile(url, "a".repeat(64)), protector,
+                { failed.set(true) }, builder).use { carrier ->
                 DatagramSocket().use { socket ->
                     socket.soTimeout = 3000
                     val bytes = ByteArray(1252) { (it % 256).toByte() }
@@ -80,8 +97,9 @@ class WssCarrierTest {
         server.start()
         try {
             val url = server.url("/bproto").toString().replace("https://", "wss://")
+            val protector = TestProtector { true }
             assertThrows(IllegalStateException::class.java) {
-                WssCarrier.connect(WssProfile(url, "a".repeat(64)), { true }, {},
+                WssCarrier.connect(WssProfile(url, "a".repeat(64)), protector, {},
                     OkHttpClient.Builder().sslSocketFactory(clientTls.sslSocketFactory(), clientTls.trustManager))
             }
         } finally { server.shutdown() }

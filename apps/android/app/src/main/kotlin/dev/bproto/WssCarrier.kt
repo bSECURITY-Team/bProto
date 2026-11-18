@@ -12,16 +12,38 @@ import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 
-/** Protect each TCP socket before OkHttp connects it; never downgrade WSS. */
-internal class ProtectedSocketFactory(private val protect: (Socket) -> Boolean) : SocketFactory() {
-    override fun createSocket(): Socket = Socket().also {
-        if (!protect(it)) { it.close(); error("WSS socket protection failed") }
+/**
+ * Protect each TCP socket before OkHttp connects it; never downgrade WSS.
+ *
+ * `Socket()` has no fd, so `VpnService.protect(Socket)` used to fail here. The
+ * protector hands us a `SocketChannel`-backed socket with a real fd instead.
+ */
+internal class ProtectedSocketFactory(private val protector: SocketProtector) : SocketFactory() {
+    override fun createSocket(): Socket = protector.createSocket().also {
+        if (!protector.protectSocket(it)) {
+            it.close()
+            error("WSS socket protection failed")
+        }
     }
+
     private fun connected(remote: InetSocketAddress, local: InetSocketAddress? = null): Socket {
-        val socket = createSocket()
-        try { if (local != null) socket.bind(local); socket.connect(remote); return socket }
-        catch (e: Exception) { socket.close(); throw e }
+        // With a peer we can bind a wildcard of the right family before
+        // protect(); with an explicit local address, bind that instead.
+        val socket = if (local != null) {
+            protector.createSocket().also { it.bind(local) }
+        } else {
+            protector.createSocket(remote.address)
+        }
+        try {
+            if (!protector.protectSocket(socket, remote.address)) error("WSS socket protection failed")
+            socket.connect(remote)
+            return socket
+        } catch (e: Exception) {
+            socket.close()
+            throw e
+        }
     }
+
     override fun createSocket(host: String, port: Int) = connected(InetSocketAddress(host, port))
     override fun createSocket(host: InetAddress, port: Int) = connected(InetSocketAddress(host, port))
     override fun createSocket(host: String, port: Int, local: InetAddress, localPort: Int) =
@@ -95,23 +117,28 @@ class WssCarrier private constructor(
     }
 
     companion object {
-        internal fun connect(profile: WssProfile, protect: (Socket) -> Boolean, failed: () -> Unit,
+        internal fun connect(profile: WssProfile, protector: SocketProtector, failed: () -> Unit,
                              builder: OkHttpClient.Builder = OkHttpClient.Builder()): WssCarrier {
-            val client = builder.socketFactory(ProtectedSocketFactory(protect))
+            val client = builder.socketFactory(ProtectedSocketFactory(protector))
                 .proxy(Proxy.NO_PROXY)
                 .connectionSpecs(listOf(ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
                     .tlsVersions(TlsVersion.TLS_1_3).build()))
                 .connectTimeout(10, TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS)
                 .pingInterval(20, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
-            val carrier = WssCarrier(client, DatagramSocket(0, InetAddress.getByName("127.0.0.1")), failed)
-            try { carrier.start(profile); return carrier } catch (e: Exception) { carrier.close(); throw e }
+            val local = DatagramSocket(0, InetAddress.getByName("127.0.0.1"))
+            val carrier = WssCarrier(client, local, failed)
+            try {
+                check(protector.protectDatagram(local)) { "WSS relay protection failed" }
+                carrier.start(profile)
+                return carrier
+            } catch (e: Exception) { carrier.close(); throw e }
         }
 
-        fun prepare(uri: String, protect: (Socket) -> Boolean, failed: () -> Unit): Pair<String, Closeable?> {
+        fun prepare(uri: String, protector: SocketProtector, failed: () -> Unit): Pair<String, Closeable?> {
             val config = JSONObject(String(Base64.getUrlDecoder().decode(uri.removePrefix("bproto://import/")), Charsets.UTF_8))
-            val profile = WssProfile.parse(config) ?: return TlsCarrier.prepare(uri, protect, failed)
+            val profile = WssProfile.parse(config) ?: return TlsCarrier.prepare(uri, protector, failed)
             check(android.os.Build.VERSION.SDK_INT >= 29) { "WSS carrier requires Android 10 or newer" }
-            val carrier = connect(profile, protect, failed)
+            val carrier = connect(profile, protector, failed)
             config.remove("wss")
             config.put("server", "127.0.0.1:${carrier.port}")
             val native = "bproto://import/" + Base64.getUrlEncoder().withoutPadding()

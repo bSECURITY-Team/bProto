@@ -7,6 +7,18 @@ Baseline: tag `v2.5.0`, commit `d1081b3ad3dbe28d23c7df7cc3fafbc21179040b`.
 Статус / Status: proposal for agreement; no feature implementation in this change.
 Ветка / Branch: `docs/completion-audit-2.5`.
 
+> **Current-branch implementation note (applies to `arena/901cacf6-bproto`, not to the audit baseline).**
+> The Android "connected but all requests time out" defect has been fixed in code:
+> route-only `::/0` capture is gone, captured IPv6 is rejected with a valid
+> ICMPv6 "no route" error, refused IPv6 capture falls back to IPv4-only with a
+> leak warning, pump send errors are non-fatal, "connected" is published only
+> after `pumpActive()`, and all UDP/TCP/carrier sockets are protected before
+> connect and re-protected on network changes. Full native IPv6 forwarding is
+> **still not implemented**. These changes were not validated on a real Android
+> device or a live server in this sandbox; the P1 device/e2e evidence gate below
+> remains open. References to Android failing closed or to stale IPv4-only
+> retry notes describe the older baseline, not the current branch.
+
 ## Область и фактические проверки / Scope and executed checks
 
 RU: Проверены TODO/FIXME/unimplemented и пути panel → agent, выдача/отзыв
