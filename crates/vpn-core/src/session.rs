@@ -315,12 +315,10 @@ enum Wire {
         tx: mpsc::Sender<Vec<u8>>,
         /// Inbound datagrams fed by the reader task.
         rx: tokio::sync::Mutex<mpsc::Receiver<Vec<u8>>>,
-        /// A clone of the connected stream keeps the descriptor alive and
-        /// lets `Tunnel::socket_fd()` re-protect it after a network change.
+        /// A clone of the connected stream: `into_split()` consumes the tokio
+        /// stream, but `Tunnel::socket_fd()` still needs a live descriptor for
+        /// `protect()` after Wi-Fi <-> LTE changes.
         keeper: std::net::TcpStream,
-        /// Raw descriptor on Unix; `-1` elsewhere.
-        #[cfg(unix)]
-        fd: RawFd,
     },
 }
 
@@ -393,8 +391,6 @@ impl Wire {
         let keeper = std_stream
             .try_clone()
             .map_err(|e| Error::Transport(format!("tcp dup: {e}")))?;
-        #[cfg(unix)]
-        let fd = keeper.as_raw_fd();
         let stream = TokioTcpStream::from_std(std_stream)
             .map_err(|e| Error::Transport(format!("tcp from_std: {e}")))?;
         let (mut read_half, mut write_half) = stream.into_split();
@@ -441,8 +437,6 @@ impl Wire {
             tx: out_tx,
             rx: tokio::sync::Mutex::new(in_rx),
             keeper,
-            #[cfg(unix)]
-            fd,
         })
     }
 
@@ -651,7 +645,7 @@ impl Tunnel {
     pub fn socket_fd(&self) -> RawFd {
         match &*self.shared.wire {
             Wire::Udp { sock, .. } => sock.as_raw_fd(),
-            Wire::Tcp { fd, .. } => *fd,
+            Wire::Tcp { keeper, .. } => keeper.as_raw_fd(),
         }
     }
 

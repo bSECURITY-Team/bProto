@@ -235,9 +235,7 @@ fn pump_moves_packets_both_ways() {
     let v6_src = [
         0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
     ];
-    let v6_dst = [
-        0x26, 0x06, 0x47, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
-    ];
+    let v6_dst = [0x26, 0x06, 0x47, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
     write_packet(app_fd, &ipv6_tcp(v6_src, v6_dst));
     let icmp = read_packet(app_fd, Duration::from_secs(2))
         .expect("captured IPv6 must produce an immediate ICMPv6 error");
@@ -305,11 +303,18 @@ fn captured_ipv6_is_rejected_with_a_valid_icmpv6_error() {
     assert_eq!(reply[0] >> 4, 6, "the reply is an IPv6 packet");
     assert_eq!(reply[6], 58, "next header is ICMPv6");
     assert_eq!(&reply[8..24], &super::V6_GATEWAY[..]);
-    assert_eq!(&reply[24..40], &src[..], "the error goes back to the sender");
+    assert_eq!(
+        &reply[24..40],
+        &src[..],
+        "the error goes back to the sender"
+    );
     assert_eq!(reply[40], 1, "destination unreachable");
     assert_eq!(reply[41], 0, "no route to destination");
     assert_eq!(&reply[48..], &original[..], "the whole packet is quoted");
-    assert!(icmpv6_checksum_is_valid(&reply), "ICMPv6 checksum must verify");
+    assert!(
+        icmpv6_checksum_is_valid(&reply),
+        "ICMPv6 checksum must verify"
+    );
 }
 
 #[test]
@@ -363,9 +368,7 @@ fn icmpv6_error_walks_a_hop_by_hop_header() {
     let src = [
         0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
     ];
-    let dst = [
-        0x26, 0x06, 0x47, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
-    ];
+    let dst = [0x26, 0x06, 0x47, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
     let mut original = ipv6_tcp(src, dst);
     // A hop-by-hop options header (8 bytes) followed by the TCP header.
     original[6] = 0;
@@ -373,8 +376,8 @@ fn icmpv6_error_walks_a_hop_by_hop_header() {
     original.insert(41, 0); // Hdr Ext Len = 0 => 8 bytes
     original.resize(40 + 8 + 20 + 2, 0);
     original[48] = 0x02; // SYN, so the quoted TCP header is meaningful
-    let reply = super::icmpv6_no_route(&original)
-        .expect("TCP behind hop-by-hop options must be answered");
+    let reply =
+        super::icmpv6_no_route(&original).expect("TCP behind hop-by-hop options must be answered");
     assert_eq!(reply[40], 1);
     assert!(icmpv6_checksum_is_valid(&reply));
 }

@@ -28,9 +28,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 
-use jni::{JNIEnv, JavaVM};
 use jni::objects::{GlobalRef, JObject, JString, JValue};
 use jni::sys::{jint, jlong, jstring};
+use jni::{JNIEnv, JavaVM};
 use tokio::sync::{Notify, mpsc};
 
 use crate::BprotoTunnel;
@@ -131,16 +131,11 @@ impl JavaProtector {
 
 fn clear_java_protector() {
     vpn_core::socket_protect::clear_socket_protector();
-    let mut slot = JAVA_PROTECTOR
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut slot = JAVA_PROTECTOR.lock().unwrap_or_else(|e| e.into_inner());
     *slot = None;
 }
 
-fn install_java_protector(
-    env: &mut JNIEnv<'_>,
-    protector: &JObject<'_>,
-) -> Result<(), String> {
+fn install_java_protector(env: &mut JNIEnv<'_>, protector: &JObject<'_>) -> Result<(), String> {
     let vm = env
         .get_java_vm()
         .map_err(|e| format!("cannot get JavaVM: {e}"))?;
@@ -152,9 +147,7 @@ fn install_java_protector(
     let hook: Arc<dyn Fn(RawFd) -> bool + Send + Sync + 'static> =
         Arc::new(move |fd| for_hook.protect(fd));
     vpn_core::socket_protect::set_socket_protector(Some(hook));
-    let mut slot = JAVA_PROTECTOR
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut slot = JAVA_PROTECTOR.lock().unwrap_or_else(|e| e.into_inner());
     *slot = Some(holder);
     Ok(())
 }
@@ -500,11 +493,7 @@ fn wait_fd(fd: RawFd, events: libc::c_short) -> std::io::Result<bool> {
     Ok(pfd.revents & events != 0)
 }
 
-fn tun_reader(
-    fd: RawFd,
-    tx: mpsc::Sender<Vec<u8>>,
-    inject_tx: mpsc::Sender<Vec<u8>>,
-) {
+fn tun_reader(fd: RawFd, tx: mpsc::Sender<Vec<u8>>, inject_tx: mpsc::Sender<Vec<u8>>) {
     let mut buf = vec![0u8; TUN_BUF];
     loop {
         // The pump drops the receiving half when it returns. Nothing else

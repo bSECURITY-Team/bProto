@@ -13,10 +13,10 @@ use std::os::fd::RawFd;
 #[cfg(unix)]
 use std::sync::{Arc, RwLock};
 
-#[cfg(unix)]
-use crate::{Error, Result};
 #[cfg(not(unix))]
 use crate::Result;
+#[cfg(unix)]
+use crate::{Error, Result};
 
 #[cfg(unix)]
 type Protector = dyn Fn(RawFd) -> bool + Send + Sync + 'static;
@@ -68,29 +68,26 @@ pub fn protect_socket(_fd: i32) -> Result<()> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+    use std::sync::atomic::{AtomicI32, Ordering};
 
     #[test]
     fn hook_is_invoked_and_can_be_cleared() {
+        // A sentinel that no real socket can have: the hook stays harmless for
+        // parallel tests that call `protect_socket()` with a live fd.
+        const FAIL_FD: RawFd = -123_456;
         clear_socket_protector();
         assert!(protect_socket(1).is_ok(), "no hook must be a no-op");
 
         let seen = Arc::new(AtomicI32::new(-1));
-        let ok = Arc::new(AtomicBool::new(true));
         let seen_hook = Arc::clone(&seen);
-        let ok_hook = Arc::clone(&ok);
         set_socket_protector(Some(Arc::new(move |fd| {
             seen_hook.store(fd, Ordering::SeqCst);
-            ok_hook.load(Ordering::SeqCst)
+            fd != FAIL_FD
         })));
         assert!(protect_socket(77).is_ok());
         assert_eq!(seen.load(Ordering::SeqCst), 77);
 
-        ok.store(false, Ordering::SeqCst);
-        assert!(matches!(
-            protect_socket(78),
-            Err(Error::Transport(_))
-        ));
+        assert!(matches!(protect_socket(FAIL_FD), Err(Error::Transport(_))));
 
         clear_socket_protector();
         assert!(protect_socket(79).is_ok());
