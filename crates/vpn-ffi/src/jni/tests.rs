@@ -356,7 +356,8 @@ fn long_ipv6_packets_are_quoted_within_a_safe_size() {
     ];
     let mut original = ipv6_tcp(src, dst);
     original.resize(10_000, 0xAB);
-    original[4..6].copy_from_slice(&((original.len() - 40) as u16).to_be_bytes());
+    let payload_len = (original.len() - 40) as u16;
+    original[4..6].copy_from_slice(&payload_len.to_be_bytes());
     let reply = super::icmpv6_no_route(&original).expect("long packet is still answered");
     assert_eq!(reply.len(), 40 + 8 + super::ICMPV6_QUOTE);
     assert!(reply.len() <= 1251, "must fit the Android tun MTU");

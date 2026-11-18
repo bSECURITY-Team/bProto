@@ -580,7 +580,7 @@ fn icmpv6_no_route(original: &[u8]) -> Option<Vec<u8>> {
             6 | 17 => break,
             // Informational ICMPv6 (echo request and friends), but never an
             // ICMPv6 error or neighbour discovery, per RFC 4443 §2.4.
-            58 if offset + 1 <= original.len() && original[offset] >= 128 => break,
+            58 if offset < original.len() && original[offset] >= 128 => break,
             // Hop-by-hop, routing and destination options: skip Hdr Ext Len
             // units of 8 bytes, starting after the 2-byte header.
             0 | 43 | 60 if offset + 2 <= original.len() => {
@@ -624,11 +624,11 @@ fn icmpv6_no_route(original: &[u8]) -> Option<Vec<u8>> {
 /// padded with a zero byte on the right).
 fn internet_checksum(data: &[u8]) -> u16 {
     let mut sum: u32 = 0;
-    let mut chunks = data.chunks_exact(2);
-    for pair in &mut chunks {
-        sum += u16::from_be_bytes([pair[0], pair[1]]) as u32;
+    let (pairs, remainder) = data.as_chunks::<2>();
+    for pair in pairs {
+        sum += u16::from_be_bytes(*pair) as u32;
     }
-    if let Some(&last) = chunks.remainder().first() {
+    if let Some(&last) = remainder.first() {
         sum += (last as u32) << 8;
     }
     while sum >> 16 != 0 {
