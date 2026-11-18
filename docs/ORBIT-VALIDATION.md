@@ -1,6 +1,6 @@
 # Orbit implementation validation
 
-## PR synchronization with current main / Подготовка PR — 2026-11-17
+## Hosted CI follow-up / CI и границы приёмки — 2026-11-17
 
 The target main advanced to 1d95122 (merged upstream PR #4) after the original
 credential implementation. The key-sync branch now integrates that main:
@@ -14,17 +14,50 @@ and the two-namespace kernel TUN/live-revoke test passed (13.399 s). The Linux
 capability and non-production limits below still apply. No unrelated network,
 Android-device or Internet-forwarding acceptance is inferred from this merge.
 
-Upstream push, GitHub integration branch creation and personal-fork creation
-each returned HTTP 403. No GitHub PR has been created. The following original
-implementation record remains evidence for its explicitly named older baseline.
+The key-sync changes merged via PR #6 as 9bd090a. Android signing merged via
+the existing direct-to-main PR #5 as 0d44a59. Duplicate stacked draft PR #7 was
+closed without merge. Main contains both changes; this does not mean 3.0.0 is
+ready.
+
+GitHub Actions workflow run 44149376524 for main failed in the Linux panel job:
+`test_key_sync_e2e.py` could not find `panel/backend/target/release/panel`.
+`build_app.sh --check` builds the top-level Rust binaries but does not request a
+panel build; `cargo test` only builds the panel test harness. A follow-up change
+adds `cargo build --locked --release --manifest-path panel/backend/Cargo.toml`
+before the e2e test. The exact e2e passed locally with release binaries (8.893 s).
+PR #8 adds that build and an Android release smoke job using an ephemeral
+generated signer. Hosted PR run 44152774468 passed Linux/panel, native
+create/apply/revoke handshake, isolated namespace kernel TUN credential lab,
+Android three-ABI build, and installer/QUIC checks. At the time of this update,
+the Android release smoke job is still running; its completion and signature
+verification need a subsequent check. The push run 44152763735 passed its
+Linux/panel, Android debug, and installer jobs; it skipped the PR-only smoke.
+The ephemeral signing job, even when green, does not prove signing with the
+permanent repository key, a trusted-tag release, or upgrade/reimport on a device.
+PR #8 remains unmerged. This is not a 3.0.0 release.
+
+### 3.0 release gates still open / Открытые ворота релиза 3.0
+
+| Goal | State and exact boundary |
+| --- | --- |
+| Panel key sync | Implemented and checked through panel → mTLS agent → live server; create/apply/revoke and rejected post-revoke handshake passed. Hosted isolated Linux TUN test also passed. Production systemd and multi-replica recovery are not covered. |
+| Android signing | Signing config and trusted-tag workflow exist. Hosted debug APK and 3 ABI build passed; permanent-key signed artifact and Android install/upgrade/reimport are not yet verified. |
+| TLS/HTTP3/WSS | Isolated hosted protocol integration checks pass. Full per-transport failure matrix, device VPN datapath, timeout/interruption behavior remain incomplete. |
+| ECH | Required-client emission and fail-closed rejection checks exist; accepting ECH termination + carrier e2e and config discovery/rotation are not implemented/verified. |
+| IPv6 | Native forwarding is not implemented. Client fail-closed capture/drop behavior remains; no leak-free IPv6 datapath claim. |
+| RTT/failover | No RTT ranking or cross-server live session migration. Existing same-server authenticated rebinding does not preserve a TCP flow across independent server/NAT state. |
+| Domain routing | No domain policy engine. Current rules are CIDR, DNS configuration and app exclusions; no DNS attribution, CDN churn handling or schema updates. |
+
+Do not tag v3.0.0 while any required gate is open. The exact platform and
+capability evidence from the earlier key-sync validation remains below.
 
 ## Credential synchronization / Синхронизация ключей — 2026-11-17
 
 Baseline: v2.5.0/d1081b3. Implementation branch: feat/3.0-key-sync.
 Final server runtime source under test: af76edf (HELLO dedup preserved).
-Repository moved to https://github.com/bSECURITY-Team/bProto; HEAD is unchanged.
-Publication currently fails with HTTP 403 via both Git and GitHub integration.
-These are local results, not claims of hosted CI success or a 3.0.0 release.
+Repository moved to https://github.com/bSECURITY-Team/bProto; this work was later
+merged to main via PR #6. These remain local execution results, not claims of
+hosted CI success or a 3.0.0 release.
 
 | Executed check / Выполненная проверка | Result / Результат |
 | --- | --- |
@@ -72,7 +105,7 @@ automatic service restart and tombstone epoch compaction are not implemented.
 
 ## Android release signing preparation / Подготовка release-подписи
 
-Branch: ci/3.0-android-release-signing, stacked on the credential branch.
+Branch: ci/3.0-android-release-signing, merged to main via PR #5.
 Added environment-based Gradle signingConfig and a trusted-tag workflow consuming
 native libraries from the same run. Release publication requires android-release-apk,
 successful apksigner verification and the configured public certificate fingerprint.
