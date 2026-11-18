@@ -49,7 +49,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: panel/frontend/pnpm-lock.yaml
       - run: pnpm --dir panel/frontend install --frozen-lockfile
-      - run: ./build_app.sh --check
+      - run: ./build_app.sh --check --panel
       - run: python3 tools/connection_lab.py --bin-dir target/release smoke
       - name: Native protocol over TLS HTTP3 and WSS
         run: |
