@@ -105,20 +105,27 @@ the server's static public key. The app sends it straight to `Bproto.connect()`.
 This order is not cosmetic; swapping any two steps produces a tunnel that
 connects and carries nothing:
 
-1. **Handshake before `establish()`** — `Bproto.connect()` runs first so the server
-   can lease an address; the leased address is what goes into
-   `Builder.addAddress()`.
-2. **`protect()` on the native socket** — `Bproto.socketFd(handle)` is passed to
-   `VpnService.protect()`. Without it the encapsulated packets are routed back
-   into our own tunnel.
-3. **`establish()`** creates the tun descriptor the pump writes to.
-4. **`Bproto.pump(handle, fd)`** blocks on its own thread until `Bproto.stop()`.
+1. **Install the protector** — `Bproto.setSocketProtector(VpnProtector)` before
+   any connect. The JNI hook calls `VpnService.protect(fd)` on every native UDP
+   *and TCP fallback* socket before its first packet, and re-protects all of
+   them on a default-network change via `ConnectivityManager`.
+2. **Handshake before `establish()`** — `Bproto.connect()` runs first so the
+   server can lease an address; the leased address goes into
+   `Builder.addAddress()`. The established socket is protected again by fd.
+3. **`establish()`** creates the tun descriptor. IPv6 is captured only together
+   with an IPv6 address; captured v6 gets an ICMPv6 "no route" reply from the
+   pump. If capture is refused, the service uses IPv4-only and warns.
+4. **`Bproto.pump(handle, fd)`** runs on its own thread; the UI waits for
+   `Bproto.pumpActive()` before saying "connected", then propagates any pump
+   error into the status line.
 
 ## Known limitations (MVP)
 
-* **IPv4 only.** IPv6 is captured and dropped. If Android refuses IPv6
-  capture, connection establishment fails instead of falling back to an
-  interface that could leak IPv6.
+* **IPv4 only.** Captured IPv6 is rejected with ICMPv6 "no route to
+  destination" so v6 connects fail fast and Happy Eyeballs moves to IPv4.
+  If Android refuses IPv6 capture, the tunnel runs IPv4-only with a loud
+  warning that IPv6 may bypass the VPN. A route-only `::/0` capture is not
+  attempted: it was a black hole. Full IPv6 forwarding is still not implemented.
 * **Routing from subscriptions.** JSON subscriptions can carry IPv4 network
   routes, IPv4 DNS resolver addresses and Android package exclusions. Base64
   subscriptions use the default full IPv4 route and resolver `1.1.1.1`.
@@ -143,12 +150,13 @@ adb logcat -s bproto
 curl --interface tun0 ifconfig.me    # should return the server's egress IP
 ```
 
-If `tun0` comes up but nothing passes, check `protect()` first. Rust connects
-the server socket during the handshake — before the app can protect it — and
-although Android implements `protect()` as a per-socket routing mark, which
-applies to an already-connected socket, this is the step to suspect before
-anything else. `adb logcat -s bproto` shows `could not protect socket N` when the
-call is refused outright.
+If `tun0` comes up but nothing passes, check `protect()` first: all native,
+QUIC, TLS, WSS and local relay sockets are now registered with `VpnProtector`
+and re-protected after Wi-Fi <-> LTE changes, but an OEM can still refuse a
+particular fd. `adb logcat -s bproto` shows `could not protect socket N`,
+`VPN socket protection failed for fd N` or a stats line with `rx=0 tx=0` when
+the call is refused. The native hook protects sockets *before* connect, so a
+stale "protect after handshake" race no longer exists.
 
 Then check the server's own stats line: `sessions=1` means the client is in the
 session table, and `unknown=0` means nothing is arriving with a tag the server

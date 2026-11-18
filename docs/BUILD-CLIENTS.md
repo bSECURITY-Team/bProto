@@ -114,7 +114,7 @@ discovers it in production.
 
 | Gap | Linux | Android | iOS |
 | --- | --- | --- | --- |
-| IPv6 in the tunnel | ✗ routes IPv4 only | captured and dropped (best effort — see the note below) | not captured (leaks) |
+| IPv6 in the tunnel | ✗ routes IPv4 only | captured + ICMPv6 "no route" (best effort — see the note below) | not captured (leaks) |
 | DNS pushed by the server | ✗ | hardcoded `1.1.1.1` | hardcoded `1.1.1.1` |
 | Kill switch / always-on | ✗ | use Android's always-on VPN | ✗ |
 | GUI | ✗ CLI only | one screen | none (provider only) |
@@ -125,8 +125,12 @@ traffic will see bProto for what it is. That is deliberate for v0.1 — see
 `docs/PROTOCOL.md` §"Mode B".
 
 The Android IPv6 row deserves a note because "best effort" is doing real work
-there. The client asks for an IPv6 address and a `::/0` route so v6 cannot walk
-out in the clear, but some Android builds reject an IPv6 address in their native
-address-config path (`VpnJni: Invalid address`). When that happens the service
-retries IPv4-only and puts the fact in the status line; it does not fail the
-tunnel and it does not hide the gap.
+there. The client asks for an IPv6 address and a `::/0` route together, so v6
+cannot walk out in the clear. The JNI pump answers captured v6 with an ICMPv6
+"no route to destination" error — a fast kernel failure that lets Happy
+Eyeballs pick IPv4 — rather than silently dropping it and creating a TCP
+timeout. Some Android builds reject an IPv6 address in their native
+address-config path (`VpnJni: Invalid address`); the service then establishes
+IPv4-only and puts a leak warning in the status line. It deliberately does not
+retry with `::/0` and no IPv6 address: that route-only capture was the black
+hole that made the tunnel look connected while every request timed out.

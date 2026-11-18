@@ -795,15 +795,23 @@ routes. It is not a built-in DNS-over-HTTPS implementation: DNS packets travel
 through the encrypted VPN. Browser DoH settings and bypassed applications are
 separate considerations.
 
-**RU.** Datapath в текущем клиенте переносит IPv4. IPv6 перехватывается и
-отбрасывается. Если Android отказывается создать IPv6 capture, подключение
-останавливается: fallback на потенциально протекающий IPv4-only interface
-не выполняется. IPv6-only сайты могут оказаться недоступны.
+**RU.** Datapath в текущем клиенте переносит IPv4. Если Android принимает IPv6
+адрес и маршрут `::/0`, перехваченный IPv6 не просто отбрасывается: JNI-pump
+отвечает ICMPv6 «no route to destination», чтобы ядро сразу отказало v6-сокету
+и приложение перешло на IPv4 (Happy Eyeballs), а не ждало TCP-timeout. Если
+прошивка отказывается от IPv6 capture, подключение продолжает работать на
+IPv4-only интерфейсе, но в статусе явно предупреждает о возможной утечке IPv6.
+Маршрут `::/0` без IPv6-адреса больше не добавляется — именно он создавал
+«подключено, но всё таймаутит». IPv6-only сайты по-прежнему недоступны.
 
-**EN.** The current datapath transports IPv4. IPv6 is captured and dropped.
-If Android refuses IPv6 capture, connection establishment fails rather than
-falling back to a potentially leaking IPv4-only interface. IPv6-only sites
-may therefore be unreachable.
+**EN.** The datapath transports IPv4. When Android accepts an IPv6 address and
+`::/0`, captured IPv6 is rejected with an ICMPv6 "no route to destination"
+error instead of being silently black-holed: the kernel fails the v6 socket
+immediately and applications fall back to IPv4 instead of waiting for a full
+TCP timeout. If the firmware refuses IPv6 capture, the VPN continues with a
+real IPv4-only interface and a loud leak warning. A route-only `::/0` capture
+without an address is no longer attempted — that was the "connected but every
+request times out" configuration. IPv6-only sites remain unreachable.
 
 **RU:** в Linux DNS остаётся задачей оператора; `up` не является полной настройкой resolver.
 **EN:** Linux DNS remains operator-managed; `up` is not complete resolver configuration.
@@ -974,8 +982,9 @@ required backup and remove obsolete firewall/security-group rules.
 | `Address already in use` | `ss -lntup`; conflicting UDP listener / конфликт UDP |
 | TUN creation fails | `/dev/net/tun`, VPS permissions, `CAP_NET_ADMIN` |
 | Handshake timeout | Public IP:port, UDP firewall, PSK, user ID, tag key |
-| Connected but no Internet | `--datapath`, forwarding=1, NAT interface, DNS |
-| Android IPv6 capture refused | Firmware support; connection intentionally fails closed |
+| Connected but no Internet | First Android: `pumpActive`/`stats`, `protect()` and IPv6 capture; then server: `--datapath`, forwarding=1, NAT interface, DNS |
+| Android: connected, all requests time out | `adb logcat -s bproto` (native pump errors, `could not protect socket N`, `rx=0 tx=0`), `adb shell ip -6 route`, `curl -4` vs `curl -6`; not a CLI/server diagnosis |
+| Android IPv6 capture refused | Firmware support; IPv4-only fallback with a leak warning in status |
 | Panel certificate failure | DNS A/AAAA, TCP 80/443, Caddy logs |
 | Subscription import failure | HTTPS certificate, no redirect, ≤1 MiB, supported schema |
 | Panel key does not connect | Manual server-side synchronization / ручная синхронизация |

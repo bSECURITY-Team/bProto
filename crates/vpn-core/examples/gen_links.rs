@@ -12,11 +12,11 @@ fn main() {
     let keys =
         std::fs::read_to_string("/data/data/com.termux/files/usr/tmp/opencode/keys.txt").unwrap();
     let mut lines = keys.lines();
-    let psk: [u8; 32] = vpn_core::config::from_hex(lines.next().unwrap().trim())
+    let psk: [u8; 32] = from_hex(lines.next().unwrap().trim())
         .unwrap()
         .try_into()
         .unwrap();
-    let tag_key: [u8; 32] = vpn_core::config::from_hex(lines.next().unwrap().trim())
+    let tag_key: [u8; 32] = from_hex(lines.next().unwrap().trim())
         .unwrap()
         .try_into()
         .unwrap();

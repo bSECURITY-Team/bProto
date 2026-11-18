@@ -10,6 +10,8 @@
 //!   them, estimates RTT, feeds CUBIC and keeps the path alive.
 
 use std::net::{Ipv4Addr, SocketAddr};
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, RawFd};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -313,6 +315,10 @@ enum Wire {
         tx: mpsc::Sender<Vec<u8>>,
         /// Inbound datagrams fed by the reader task.
         rx: tokio::sync::Mutex<mpsc::Receiver<Vec<u8>>>,
+        /// A clone of the connected stream: `into_split()` consumes the tokio
+        /// stream, but `Tunnel::socket_fd()` still needs a live descriptor for
+        /// `protect()` after Wi-Fi <-> LTE changes.
+        keeper: std::net::TcpStream,
     },
 }
 
@@ -348,10 +354,45 @@ impl Wire {
     }
 
     async fn tcp(peer: SocketAddr) -> Result<Self> {
-        let stream = tokio::net::TcpStream::connect(peer)
+        use tokio::net::{TcpSocket, TcpStream as TokioTcpStream};
+
+        // `TcpStream::connect()` creates and connects the socket in one step,
+        // which leaves no window for Android's `VpnService.protect(fd)`. Build
+        // the socket explicitly, bind it, protect it, then connect: the SYN
+        // must already be marked as bypassing the tunnel.
+        let socket = if peer.is_ipv4() {
+            TcpSocket::new_v4()
+        } else {
+            TcpSocket::new_v6()
+        }
+        .map_err(|e| Error::Transport(format!("tcp socket {peer}: {e}")))?;
+        let local: SocketAddr = if peer.is_ipv4() {
+            "0.0.0.0:0".parse().expect("valid literal")
+        } else {
+            "[::]:0".parse().expect("valid literal")
+        };
+        socket
+            .bind(local)
+            .map_err(|e| Error::Transport(format!("tcp bind {local}: {e}")))?;
+        #[cfg(unix)]
+        crate::socket_protect::protect_socket(socket.as_raw_fd())?;
+        let stream = socket
+            .connect(peer)
             .await
             .map_err(|e| Error::Transport(format!("tcp connect {peer}: {e}")))?;
         stream.set_nodelay(true).ok();
+
+        // Keep a clone of the connected stream: `into_split()` consumes the
+        // tokio stream, and `Tunnel::socket_fd()` still needs a live descriptor
+        // for `protect()` after Wi-Fi <-> LTE changes.
+        let std_stream = stream
+            .into_std()
+            .map_err(|e| Error::Transport(format!("tcp into_std: {e}")))?;
+        let keeper = std_stream
+            .try_clone()
+            .map_err(|e| Error::Transport(format!("tcp dup: {e}")))?;
+        let stream = TokioTcpStream::from_std(std_stream)
+            .map_err(|e| Error::Transport(format!("tcp from_std: {e}")))?;
         let (mut read_half, mut write_half) = stream.into_split();
         let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(256);
         let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>(2048);
@@ -395,6 +436,7 @@ impl Wire {
         Ok(Self::Tcp {
             tx: out_tx,
             rx: tokio::sync::Mutex::new(in_rx),
+            keeper,
         })
     }
 
@@ -590,20 +632,20 @@ impl Tunnel {
         self.shared.session.mtu()
     }
 
-    /// Raw descriptor of the tunnel's UDP socket.
+    /// Raw descriptor of the tunnel's server socket (UDP or TCP).
     ///
     /// Android needs this to call `VpnService.protect(fd)`: without it the
     /// tunnel's own traffic to the server is routed back into the tunnel and
     /// nothing gets through. The descriptor is owned by the tunnel; do not
-    /// close it. Returns `-1` when the tunnel rides the TCP transport (no UDP
-    /// socket to protect; the TCP stream needs no protection).
+    /// close it. Both transports expose a real descriptor — returning `-1` for
+    /// the TCP fallback used to make the Android service abort with "no socket
+    /// descriptor" right after a successful TCP handshake.
     #[cfg(unix)]
     #[must_use]
-    pub fn socket_fd(&self) -> std::os::fd::RawFd {
-        use std::os::fd::AsRawFd;
+    pub fn socket_fd(&self) -> RawFd {
         match &*self.shared.wire {
             Wire::Udp { sock, .. } => sock.as_raw_fd(),
-            Wire::Tcp { .. } => -1,
+            Wire::Tcp { keeper, .. } => keeper.as_raw_fd(),
         }
     }
 

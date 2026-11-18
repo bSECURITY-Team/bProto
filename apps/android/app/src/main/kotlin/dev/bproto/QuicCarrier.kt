@@ -3,7 +3,6 @@ package dev.bproto
 import java.io.Closeable
 import java.net.InetAddress
 import java.net.Inet6Address
-import java.net.Socket
 import java.util.Base64
 import org.json.JSONObject
 
@@ -29,10 +28,10 @@ class QuicCarrier private constructor(private var handle: Long) : Closeable {
         }, "bproto-quic").start()
     }
     companion object {
-        fun prepare(uri: String, protectFd: (Int) -> Boolean, protectSocket: (Socket) -> Boolean,
-                    failed: () -> Unit): Pair<String, Closeable?> {
+        /** Bind -> protect(fd) -> native H3 bridge -> local UDP relay. */
+        fun prepare(uri: String, protector: SocketProtector, failed: () -> Unit): Pair<String, Closeable?> {
             val config = JSONObject(String(Base64.getUrlDecoder().decode(uri.removePrefix("bproto://import/")), Charsets.UTF_8))
-            val profile = QuicProfile.parse(config) ?: return WssCarrier.prepare(uri, protectSocket, failed)
+            val profile = QuicProfile.parse(config) ?: return WssCarrier.prepare(uri, protector, failed)
             val address = InetAddress.getByName(profile.address)
             val ipv6 = address is Inet6Address
             val handle = Bproto.quicBind(if (ipv6) 1 else 0)
@@ -40,7 +39,7 @@ class QuicCarrier private constructor(private var handle: Long) : Closeable {
             val carrier = QuicCarrier(handle)
             try {
                 val fd = Bproto.quicSocketFd(handle)
-                check(fd >= 0 && protectFd(fd)) { "QUIC socket protection failed" }
+                check(fd >= 0 && protector.protectFd(fd)) { "QUIC socket protection failed" }
                 val endpoint = if (ipv6) "[${address.hostAddress}]:${profile.port}" else "${address.hostAddress}:${profile.port}"
                 val port = Bproto.quicStart(handle, endpoint, profile.hostname, profile.token,
                     profile.ech?.bytes ?: byteArrayOf(), profile.ech?.expires ?: 0)

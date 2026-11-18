@@ -7,7 +7,6 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.net.Socket
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SNIHostName
@@ -68,17 +67,21 @@ class TlsCarrier private constructor(
     }
 
     companion object {
-        fun prepare(uri: String, protect: (Socket) -> Boolean, failed: () -> Unit): Pair<String, TlsCarrier?> {
+        fun prepare(uri: String, protector: SocketProtector, failed: () -> Unit): Pair<String, TlsCarrier?> {
             val config = JSONObject(String(Base64.getUrlDecoder().decode(uri.removePrefix("bproto://import/")), Charsets.UTF_8))
             val profile = TlsProfile.parse(config) ?: return uri to null
             val (host, address, port, token) = profile
             check(android.os.Build.VERSION.SDK_INT >= 29) { "TLS carrier requires Android 10 or newer" }
-            val raw = Socket()
+            val peerAddress = InetAddress.getByName(address)
+            // A bare `Socket()` has no fd until connect, so protect() on it
+            // always fails. Create a bound fd-bearing socket and protect it
+            // *before* the TCP connect.
+            val raw = protector.createSocket(peerAddress)
             var secure: SSLSocket? = null
             var local: DatagramSocket? = null
             try {
-                check(protect(raw)) { "TLS socket protection failed" }
-                raw.connect(InetSocketAddress(address, port), 10000)
+                check(protector.protectSocket(raw, peerAddress)) { "TLS socket protection failed" }
+                raw.connect(InetSocketAddress(peerAddress, port), 10000)
                 secure = (SSLSocketFactory.getDefault() as SSLSocketFactory)
                     .createSocket(raw, host, port, true) as SSLSocket
                 secure.enabledProtocols = arrayOf("TLSv1.3")
@@ -100,6 +103,7 @@ class TlsCarrier private constructor(
                 check(response.toString() == "HTTP/1.1 200 Connection Established\r\n\r\n") { "TLS carrier authentication failed" }
                 secure.soTimeout = 0
                 local = DatagramSocket(0, InetAddress.getByName("127.0.0.1"))
+                check(protector.protectDatagram(local)) { "TLS relay protection failed" }
                 val carrier = TlsCarrier(secure, local, failed)
                 config.remove("tls")
                 config.put("server", "127.0.0.1:${carrier.port}")
