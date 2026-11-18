@@ -741,17 +741,18 @@ async fn client_loop(shared: Arc<ClientShared>) {
                     continue;
                 };
                 shared.last_rx_ms.store(shared.now_ms(), Ordering::Relaxed);
-                let flush = shared.mark_ack(pn).await;
-                // Response-driven ACKs only: either the buffer is full, or the
-                // ack goes out 0.3–2 ms after the burst started — Firefox's
-                // quinn ack-delay cadence, never a fixed period.
-                if flush {
-                    let _ = shared.send_ack().await;
-                } else if shared.pending_acks.load(Ordering::Relaxed) == 1 {
-                    schedule_delayed_ack(&shared);
-                }
                 match opened {
                     Opened::Ip(pkt) => {
+                        // Only IP packets are tracked in SentPackets, so only
+                        // they may be ACKed. Acking control-frame PNs produced
+                        // zero-byte ACKs that never freed the congestion
+                        // window and stalled throughput.
+                        let flush = shared.mark_ack(pn).await;
+                        if flush {
+                            let _ = shared.send_ack().await;
+                        } else if shared.pending_acks.load(Ordering::Relaxed) == 1 {
+                            schedule_delayed_ack(&shared);
+                        }
                         if shared.inbound_tx.send(pkt).await.is_err() {
                             break;
                         }

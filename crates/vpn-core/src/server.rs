@@ -278,14 +278,19 @@ impl ServerNode {
             s.ping_backoff_us = PING_BACKOFF_BASE_US;
             s.next_ping_us = 0;
 
-            s.ack.insert(pn);
-            s.pending += 1;
-            if s.pending >= ACK_EVERY {
-                flush_ack(s, &self.sock).await;
-            }
-
+            // Only IP packets are tracked in SentPackets (control frames
+            // are never registered), so only they may be ACKed back. Acking
+            // control-frame PNs produced zero-byte ACKs that never freed the
+            // congestion window and stalled throughput.
             match opened {
-                Opened::Ip(pkt) => return Ok(Some(pkt)),
+                Opened::Ip(pkt) => {
+                    s.ack.insert(pn);
+                    s.pending += 1;
+                    if s.pending >= ACK_EVERY {
+                        flush_ack(s, &self.sock).await;
+                    }
+                    return Ok(Some(pkt));
+                }
                 Opened::Control(frame_bytes) => {
                     close_requested = handle_control(s, &frame_bytes, now_us, &self.sock).await;
                 }
